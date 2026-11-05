@@ -1,0 +1,308 @@
+import { sql } from 'drizzle-orm';
+import {
+  boolean, check, doublePrecision, index, integer, jsonb, pgEnum, pgTable,
+  primaryKey, text, timestamp, uniqueIndex, uuid, varchar,
+} from 'drizzle-orm/pg-core';
+import {
+  ENGAGEMENT_STATUSES, PLAN_CODES, PROPOSAL_STATUSES, REPORT_STATUSES,
+  REQUEST_STATUSES, SUBSCRIPTION_STATUSES, VERIFICATION_STATUSES,
+  type Entitlements,
+} from '@ergatis/shared';
+
+const tz = { withTimezone: true } as const;
+const createdAt = () => timestamp(tz).notNull().defaultNow();
+const updatedAt = () => timestamp(tz).notNull().defaultNow().$onUpdate(() => new Date());
+const id = () => uuid().primaryKey().defaultRandom();
+
+export const requestStatus = pgEnum('request_status', REQUEST_STATUSES);
+export const proposalStatus = pgEnum('proposal_status', PROPOSAL_STATUSES);
+export const engagementStatus = pgEnum('engagement_status', ENGAGEMENT_STATUSES);
+export const subscriptionStatus = pgEnum('subscription_status', SUBSCRIPTION_STATUSES);
+export const reportStatus = pgEnum('report_status', REPORT_STATUSES);
+export const verificationStatus = pgEnum('verification_status', VERIFICATION_STATUSES);
+export const planCode = pgEnum('plan_code', PLAN_CODES);
+
+/* Better Auth */
+export const user = pgTable('user', {
+  id: id(),
+  name: text().notNull(),
+  email: text().notNull().unique(),
+  emailVerified: boolean().notNull().default(false),
+  image: text(),
+  role: text().default('user'),
+  banned: boolean().default(false),
+  banReason: text(),
+  banExpires: timestamp(tz),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export const session = pgTable('session', {
+  id: id(),
+  expiresAt: timestamp(tz).notNull(),
+  token: text().notNull().unique(),
+  ipAddress: text(),
+  userAgent: text(),
+  impersonatedBy: text(),
+  userId: uuid().notNull().references(() => user.id, { onDelete: 'cascade' }),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [index('session_user_idx').on(t.userId)]);
+
+export const account = pgTable('account', {
+  id: id(),
+  accountId: text().notNull(),
+  providerId: text().notNull(),
+  userId: uuid().notNull().references(() => user.id, { onDelete: 'cascade' }),
+  accessToken: text(),
+  refreshToken: text(),
+  idToken: text(),
+  accessTokenExpiresAt: timestamp(tz),
+  refreshTokenExpiresAt: timestamp(tz),
+  scope: text(),
+  password: text(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [index('account_user_idx').on(t.userId)]);
+
+export const verification = pgTable('verification', {
+  id: id(),
+  identifier: text().notNull(),
+  value: text().notNull(),
+  expiresAt: timestamp(tz).notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [index('verification_identifier_idx').on(t.identifier)]);
+
+/* Perfis: a mesma pessoa pode contratar e prestar serviços. */
+export const profiles = pgTable('profiles', {
+  userId: uuid().primaryKey().references(() => user.id, { onDelete: 'cascade' }),
+  displayName: varchar({ length: 120 }).notNull(),
+  phone: varchar({ length: 20 }),
+  bio: varchar({ length: 1000 }),
+  city: varchar({ length: 100 }),
+  state: varchar({ length: 2 }),
+  latitude: doublePrecision(),
+  longitude: doublePrecision(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [index('profiles_location_idx').on(t.state, t.city)]);
+
+export const professionals = pgTable('professionals', {
+  userId: uuid().primaryKey().references(() => user.id, { onDelete: 'cascade' }),
+  headline: varchar({ length: 120 }).notNull(),
+  serviceRadiusKm: integer().notNull().default(20),
+  verification: verificationStatus().notNull().default('none'),
+  active: boolean().notNull().default(true),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [check('professionals_radius_check', sql`${t.serviceRadiusKm} between 1 and 300`)]);
+
+export const categories = pgTable('categories', {
+  id: id(),
+  parentId: uuid().references((): any => categories.id, { onDelete: 'restrict' }),
+  name: varchar({ length: 80 }).notNull(),
+  slug: varchar({ length: 100 }).notNull().unique(),
+  active: boolean().notNull().default(true),
+  createdAt: createdAt(),
+}, (t) => [index('categories_parent_idx').on(t.parentId)]);
+
+export const professionalCategories = pgTable('professional_categories', {
+  professionalId: uuid().notNull().references(() => professionals.userId, { onDelete: 'cascade' }),
+  categoryId: uuid().notNull().references(() => categories.id, { onDelete: 'restrict' }),
+}, (t) => [
+  primaryKey({ columns: [t.professionalId, t.categoryId] }),
+  index('professional_categories_category_idx').on(t.categoryId),
+]);
+
+/* Fluxo principal: pedido -> proposta -> contratação -> avaliação */
+export const serviceRequests = pgTable('service_requests', {
+  id: id(),
+  clientId: uuid().notNull().references(() => user.id, { onDelete: 'restrict' }),
+  categoryId: uuid().notNull().references(() => categories.id, { onDelete: 'restrict' }),
+  title: varchar({ length: 140 }).notNull(),
+  description: text().notNull(),
+  city: varchar({ length: 100 }).notNull(),
+  state: varchar({ length: 2 }).notNull(),
+  latitude: doublePrecision(),
+  longitude: doublePrecision(),
+  budgetCents: integer(),
+  urgent: boolean().notNull().default(false),
+  scheduledFor: timestamp(tz),
+  status: requestStatus().notNull().default('open'),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  index('requests_client_idx').on(t.clientId),
+  index('requests_feed_idx').on(t.status, t.categoryId, t.createdAt),
+  check('requests_budget_check', sql`${t.budgetCents} is null or ${t.budgetCents} > 0`),
+]);
+
+export const proposals = pgTable('proposals', {
+  id: id(),
+  requestId: uuid().notNull().references(() => serviceRequests.id, { onDelete: 'cascade' }),
+  professionalId: uuid().notNull().references(() => professionals.userId, { onDelete: 'restrict' }),
+  amountCents: integer().notNull(),
+  message: varchar({ length: 1000 }).notNull(),
+  status: proposalStatus().notNull().default('sent'),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  uniqueIndex('proposals_one_per_professional').on(t.requestId, t.professionalId),
+  index('proposals_professional_idx').on(t.professionalId),
+  check('proposals_amount_check', sql`${t.amountCents} > 0`),
+]);
+
+/** Contador atômico usado para aplicar o limite mensal do plano. */
+export const proposalUsage = pgTable('proposal_usage', {
+  professionalId: uuid().notNull().references(() => professionals.userId, { onDelete: 'cascade' }),
+  period: varchar({ length: 7 }).notNull(),
+  used: integer().notNull().default(0),
+}, (t) => [primaryKey({ columns: [t.professionalId, t.period] })]);
+
+export const engagements = pgTable('engagements', {
+  id: id(),
+  requestId: uuid().notNull().references(() => serviceRequests.id, { onDelete: 'restrict' }),
+  proposalId: uuid().notNull().references(() => proposals.id, { onDelete: 'restrict' }),
+  clientId: uuid().notNull().references(() => user.id, { onDelete: 'restrict' }),
+  professionalId: uuid().notNull().references(() => professionals.userId, { onDelete: 'restrict' }),
+  agreedCents: integer().notNull(),
+  status: engagementStatus().notNull().default('active'),
+  completedAt: timestamp(tz),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  uniqueIndex('engagements_one_per_request').on(t.requestId),
+  index('engagements_professional_idx').on(t.professionalId, t.status),
+  index('engagements_client_idx').on(t.clientId, t.status),
+]);
+
+export const reviews = pgTable('reviews', {
+  id: id(),
+  engagementId: uuid().notNull().references(() => engagements.id, { onDelete: 'cascade' }),
+  reviewerId: uuid().notNull().references(() => user.id, { onDelete: 'restrict' }),
+  revieweeId: uuid().notNull().references(() => user.id, { onDelete: 'restrict' }),
+  rating: integer().notNull(),
+  comment: varchar({ length: 1000 }),
+  createdAt: createdAt(),
+}, (t) => [
+  uniqueIndex('reviews_one_per_side').on(t.engagementId, t.reviewerId),
+  index('reviews_reviewee_idx').on(t.revieweeId),
+  check('reviews_rating_check', sql`${t.rating} between 1 and 5`),
+  check('reviews_not_self_check', sql`${t.reviewerId} <> ${t.revieweeId}`),
+]);
+
+/* Conversa vinculada a uma proposta, entre cliente e profissional. */
+export const conversations = pgTable('conversations', {
+  id: id(),
+  proposalId: uuid().notNull().unique().references(() => proposals.id, { onDelete: 'cascade' }),
+  clientId: uuid().notNull().references(() => user.id, { onDelete: 'restrict' }),
+  professionalId: uuid().notNull().references(() => user.id, { onDelete: 'restrict' }),
+  createdAt: createdAt(),
+}, (t) => [
+  index('conversations_client_idx').on(t.clientId),
+  index('conversations_professional_idx').on(t.professionalId),
+]);
+
+export const messages = pgTable('messages', {
+  id: id(),
+  conversationId: uuid().notNull().references(() => conversations.id, { onDelete: 'cascade' }),
+  senderId: uuid().notNull().references(() => user.id, { onDelete: 'restrict' }),
+  body: varchar({ length: 2000 }).notNull(),
+  readAt: timestamp(tz),
+  createdAt: createdAt(),
+}, (t) => [index('messages_conversation_idx').on(t.conversationId, t.createdAt)]);
+
+export const notifications = pgTable('notifications', {
+  id: id(),
+  userId: uuid().notNull().references(() => user.id, { onDelete: 'cascade' }),
+  type: varchar({ length: 50 }).notNull(),
+  title: varchar({ length: 160 }).notNull(),
+  link: varchar({ length: 255 }),
+  readAt: timestamp(tz),
+  createdAt: createdAt(),
+}, (t) => [index('notifications_user_idx').on(t.userId, t.readAt)]);
+
+/* Planos, assinaturas e cortesias */
+export const plans = pgTable('plans', {
+  code: planCode().primaryKey(),
+  name: varchar({ length: 60 }).notNull(),
+  priceCents: integer().notNull(),
+  entitlements: jsonb().$type<Entitlements>().notNull(),
+  active: boolean().notNull().default(true),
+  updatedAt: updatedAt(),
+}, (t) => [check('plans_price_check', sql`${t.priceCents} >= 0`)]);
+
+export const subscriptions = pgTable('subscriptions', {
+  id: id(),
+  userId: uuid().notNull().references(() => user.id, { onDelete: 'restrict' }),
+  planCode: planCode().notNull().references(() => plans.code),
+  status: subscriptionStatus().notNull().default('pending'),
+  provider: varchar({ length: 20 }).notNull(),
+  providerCustomerId: varchar({ length: 100 }),
+  providerSubscriptionId: varchar({ length: 100 }).unique(),
+  currentPeriodEnd: timestamp(tz),
+  cancelledAt: timestamp(tz),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  index('subscriptions_user_idx').on(t.userId, t.status),
+  uniqueIndex('subscriptions_one_live_per_user').on(t.userId)
+    .where(sql`${t.status} in ('pending', 'active', 'past_due')`),
+]);
+
+export const entitlementGrants = pgTable('entitlement_grants', {
+  id: id(),
+  userId: uuid().notNull().references(() => user.id, { onDelete: 'cascade' }),
+  planCode: planCode().references(() => plans.code),
+  entitlements: jsonb().$type<Partial<Entitlements>>(),
+  reason: varchar({ length: 500 }).notNull(),
+  grantedBy: uuid().notNull().references(() => user.id, { onDelete: 'restrict' }),
+  startsAt: timestamp(tz).notNull().defaultNow(),
+  endsAt: timestamp(tz),
+  revokedAt: timestamp(tz),
+  revokedBy: uuid().references(() => user.id, { onDelete: 'restrict' }),
+  createdAt: createdAt(),
+}, (t) => [
+  index('grants_user_idx').on(t.userId),
+  check('grants_has_benefit_check', sql`${t.planCode} is not null or ${t.entitlements} is not null`),
+]);
+
+/** Webhooks chegam ao menos uma vez: a chave única impede processamento duplicado. */
+export const billingEvents = pgTable('billing_events', {
+  id: id(),
+  provider: varchar({ length: 20 }).notNull(),
+  eventId: varchar({ length: 150 }).notNull(),
+  type: varchar({ length: 80 }).notNull(),
+  payload: jsonb().notNull(),
+  createdAt: createdAt(),
+}, (t) => [uniqueIndex('billing_events_unique').on(t.provider, t.eventId)]);
+
+/* Confiança e controle */
+export const reports = pgTable('reports', {
+  id: id(),
+  reporterId: uuid().notNull().references(() => user.id, { onDelete: 'cascade' }),
+  targetUserId: uuid().notNull().references(() => user.id, { onDelete: 'cascade' }),
+  reason: varchar({ length: 1000 }).notNull(),
+  status: reportStatus().notNull().default('open'),
+  resolution: varchar({ length: 1000 }),
+  resolvedBy: uuid().references(() => user.id, { onDelete: 'set null' }),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  index('reports_status_idx').on(t.status),
+  check('reports_not_self_check', sql`${t.reporterId} <> ${t.targetUserId}`),
+]);
+
+export const auditLogs = pgTable('audit_logs', {
+  id: id(),
+  actorId: uuid().references(() => user.id, { onDelete: 'set null' }),
+  action: varchar({ length: 80 }).notNull(),
+  targetType: varchar({ length: 40 }).notNull(),
+  targetId: varchar({ length: 80 }),
+  metadata: jsonb(),
+  createdAt: createdAt(),
+}, (t) => [
+  index('audit_actor_idx').on(t.actorId),
+  index('audit_target_idx').on(t.targetType, t.targetId),
+]);
