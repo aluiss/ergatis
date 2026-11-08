@@ -1,15 +1,17 @@
 import {
-  BadRequestException, Body, Controller, Delete, Get, Injectable, Module, NotFoundException,
+  BadRequestException, Body, Controller, Delete, Get, Header, Injectable, Module, NotFoundException,
   Param, ParseUUIDPipe, Patch, Post, Query,
 } from '@nestjs/common';
 import { Roles } from '@thallesp/nestjs-better-auth';
-import { and, count, desc, eq, ilike, inArray, isNull, like, or, sql } from 'drizzle-orm';
+import { and, count, desc, eq, gte, ilike, inArray, isNull, like, lte, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
 import {
-  grantSchema, PLAN_CODES, REPORT_STATUSES, type GrantInput,
+  grantSchema, PLAN_CODES, REPORT_STATUSES, AUDIT_ACTIONS, AUDIT_GROUPS, auditActionLabel, type AuditActionKey, type AuditGroup, type AuditChange, type GrantInput,
 } from '@ergatis/shared';
 import { InjectDb } from '../common/db.module';
+import { recordAudit } from '../audit/audit';
+import { diff } from '../audit/audit-policy';
 import { SkipAudit } from '../audit/audit.interceptor';
 import { UserId } from '../common/user-id.decorator';
 import { ZodPipe } from '../common/zod.pipe';
@@ -26,14 +28,34 @@ const listSchema = z.object({
   q: z.string().trim().max(120).optional(),
   page: z.coerce.number().int().min(1).default(1),
 });
-const auditListSchema = z.object({
-  page: z.coerce.number().int().min(1).default(1),
-  /** Prefixo da ação: "auth." traz login, logout, senha etc. */
+const auditFilterSchema = z.object({
+  /** Ação exata ("auth.signed_in") ou prefixo terminado em ponto ("auth."). */
   action: z.string().trim().max(80).regex(/^[a-z_.]*$/).optional(),
-  /** Nome ou e-mail de quem fez ou de quem sofreu a ação. */
+  /** Área do catálogo (acesso, e-mails, cobrança...). */
+  group: z.enum(Object.keys(AUDIT_GROUPS) as [AuditGroup, ...AuditGroup[]]).optional(),
+  /** Nome ou e-mail de quem fez ou de quem sofreu a ação, ou trecho do resumo. */
   q: z.string().trim().max(120).optional(),
+  /** Tudo o que envolve a pessoa: o que ela fez e o que fizeram com ela. */
+  userId: z.uuid().optional(),
+  actorId: z.uuid().optional(),
+  targetType: z.string().trim().max(40).optional(),
   targetId: z.string().trim().max(80).optional(),
+  requestId: z.string().trim().max(64).optional(),
+  /** Datas ISO. `to` sem hora vale até o fim do dia. */
+  from: z.string().date().or(z.iso.datetime()).optional(),
+  to: z.string().date().or(z.iso.datetime()).optional(),
 });
+const auditListSchema = auditFilterSchema.extend({
+  page: z.coerce.number().int().min(1).default(1),
+});
+type AuditFilter = z.infer<typeof auditFilterSchema>;
+/** Teto da exportação: acima disso, o filtro está largo demais para virar planilha. */
+const AUDIT_EXPORT_LIMIT = 10_000;
+const csvCell = (v: unknown) => {
+  const text = v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);
+  // Aspas sempre; e um prefixo neutraliza fórmulas (=, +, -, @) ao abrir no Excel.
+  return `"${(/^[=+\-@]/.test(text) ? `'${text}` : text).replace(/"/g, '""')}"`;
+};
 const banSchema = z.object({ reason: z.string().trim().min(3).max(500) });
 const roleSchema = z.object({ role: z.enum(['user', 'admin']) });
 const planSchema = z.object({
@@ -65,8 +87,10 @@ class AdminService {
     private readonly files: FilesService,
   ) {}
 
-  private audit(tx: DbOrTx, actorId: string, action: string, targetType: string, targetId: string, metadata?: unknown) {
-    return tx.insert(auditLogs).values({ actorId, action, targetType, targetId, metadata });
+  /** Grava na mesma transação da ação: ou as duas acontecem, ou nenhuma. */
+  private audit(tx: DbOrTx, actorId: string, action: AuditActionKey, targetType: string, targetId: string,
+    details: { metadata?: Record<string, unknown>; changes?: AuditChange[]; summary?: string } = {}) {
+    return recordAudit({ actorId, action, targetType, targetId, ...details }, tx);
   }
 
   async metrics() {
@@ -118,10 +142,14 @@ class AdminService {
   private async setBan(actorId: string, id: string, banned: boolean, reason: string | null) {
     if (id === actorId) throw new BadRequestException('Você não pode alterar a própria conta');
     return this.db.transaction(async (tx) => {
+      const [before] = await tx.select({ banned: user.banned, banReason: user.banReason }).from(user).where(eq(user.id, id));
       const [updated] = await tx.update(user).set({ banned, banReason: reason }).where(eq(user.id, id)).returning({ id: user.id });
       if (!updated) throw new NotFoundException('Usuário não encontrado');
       if (banned) await tx.delete(session).where(eq(session.userId, id));
-      await this.audit(tx, actorId, banned ? 'user.banned' : 'user.unbanned', 'user', id, { reason });
+      await this.audit(tx, actorId, banned ? 'user.banned' : 'user.unbanned', 'user', id, {
+        changes: diff(before, { banned, banReason: reason }),
+        summary: banned ? `Banido: ${reason}` : 'Banimento removido',
+      });
       return { ok: true };
     });
   }
@@ -132,9 +160,13 @@ class AdminService {
   async setRole(actorId: string, id: string, role: 'user' | 'admin') {
     if (id === actorId) throw new BadRequestException('Você não pode alterar a própria conta');
     return this.db.transaction(async (tx) => {
+      const [before] = await tx.select({ role: user.role }).from(user).where(eq(user.id, id));
       const [updated] = await tx.update(user).set({ role }).where(eq(user.id, id)).returning({ id: user.id });
       if (!updated) throw new NotFoundException('Usuário não encontrado');
-      await this.audit(tx, actorId, 'user.role_changed', 'user', id, { role });
+      await this.audit(tx, actorId, 'user.role_changed', 'user', id, {
+        changes: diff(before, { role }),
+        summary: `Papel alterado de ${before?.role ?? 'user'} para ${role}`,
+      });
       return { ok: true };
     });
   }
@@ -151,7 +183,10 @@ class AdminService {
         grantedBy: actorId,
         endsAt: input.endsAt ? new Date(input.endsAt) : undefined,
       }).returning();
-      await this.audit(tx, actorId, 'grant.created', 'user', input.userId, { grantId: created.id, planCode: input.planCode, reason: input.reason });
+      await this.audit(tx, actorId, 'grant.created', 'user', input.userId, {
+        metadata: { grantId: created.id, planCode: input.planCode, entitlements: input.entitlements, endsAt: input.endsAt },
+        summary: `${input.planCode ? `Plano ${input.planCode}` : 'Benefício avulso'}: ${input.reason}`,
+      });
       await this.notifications.notify(tx, input.userId, 'grant_received', 'Você recebeu uma cortesia da Ergatis.', '/planos');
       return created;
     });
@@ -162,7 +197,10 @@ class AdminService {
       const [revoked] = await tx.update(entitlementGrants).set({ revokedAt: new Date(), revokedBy: actorId })
         .where(and(eq(entitlementGrants.id, id), isNull(entitlementGrants.revokedAt))).returning();
       if (!revoked) throw new NotFoundException('Cortesia não encontrada ou já revogada');
-      await this.audit(tx, actorId, 'grant.revoked', 'user', revoked.userId, { grantId: id });
+      await this.audit(tx, actorId, 'grant.revoked', 'user', revoked.userId, {
+        metadata: { grantId: id, planCode: revoked.planCode },
+        summary: `Revogada: ${revoked.reason}`,
+      });
       return revoked;
     });
   }
@@ -171,9 +209,10 @@ class AdminService {
 
   async updatePlan(actorId: string, code: (typeof PLAN_CODES)[number], input: z.infer<typeof planSchema>) {
     return this.db.transaction(async (tx) => {
+      const [before] = await tx.select().from(plans).where(eq(plans.code, code));
       const [updated] = await tx.update(plans).set(input).where(eq(plans.code, code)).returning();
       if (!updated) throw new NotFoundException('Plano não encontrado');
-      await this.audit(tx, actorId, 'plan.updated', 'plan', code, input);
+      await this.audit(tx, actorId, 'plan.updated', 'plan', code, { changes: diff(before, updated, Object.keys(input)) });
       return updated;
     });
   }
@@ -197,9 +236,10 @@ class AdminService {
 
   async resolveReport(actorId: string, id: string, input: z.infer<typeof reportSchema>) {
     return this.db.transaction(async (tx) => {
+      const [before] = await tx.select().from(reports).where(eq(reports.id, id));
       const [updated] = await tx.update(reports).set({ ...input, resolvedBy: actorId }).where(eq(reports.id, id)).returning();
       if (!updated) throw new NotFoundException('Denúncia não encontrada');
-      await this.audit(tx, actorId, 'report.updated', 'report', id, input);
+      await this.audit(tx, actorId, 'report.updated', 'report', id, { changes: diff(before, updated, Object.keys(input)) });
       return updated;
     });
   }
@@ -228,30 +268,68 @@ class AdminService {
     return result;
   }
 
-  async auditLogs({ page, action, q, targetId }: z.infer<typeof auditListSchema>) {
+  private auditQuery(f: AuditFilter) {
     const actor = alias(user, 'actor');
     const target = alias(user, 'target');
+    const endOfDay = (d: string) => (d.length === 10 ? new Date(`${d}T23:59:59.999Z`) : new Date(d));
     const where = and(
-      action ? like(auditLogs.action, `${action}%`) : undefined,
-      targetId ? eq(auditLogs.targetId, targetId) : undefined,
-      q ? or(ilike(actor.email, `%${q}%`), ilike(actor.name, `%${q}%`), ilike(target.email, `%${q}%`), ilike(target.name, `%${q}%`)) : undefined,
+      f.action ? (f.action.endsWith('.') ? like(auditLogs.action, `${f.action}%`) : eq(auditLogs.action, f.action)) : undefined,
+      f.group ? inArray(auditLogs.action, Object.entries(AUDIT_ACTIONS).filter(([, a]) => a.group === f.group).map(([k]) => k)) : undefined,
+      f.actorId ? eq(auditLogs.actorId, f.actorId) : undefined,
+      f.userId ? or(eq(auditLogs.actorId, f.userId), and(eq(auditLogs.targetType, 'user'), eq(auditLogs.targetId, f.userId))) : undefined,
+      f.targetType ? eq(auditLogs.targetType, f.targetType) : undefined,
+      f.targetId ? eq(auditLogs.targetId, f.targetId) : undefined,
+      f.requestId ? eq(auditLogs.requestId, f.requestId) : undefined,
+      f.from ? gte(auditLogs.createdAt, new Date(f.from)) : undefined,
+      f.to ? lte(auditLogs.createdAt, endOfDay(f.to)) : undefined,
+      f.q ? or(
+        ilike(actor.email, `%${f.q}%`), ilike(actor.name, `%${f.q}%`),
+        ilike(target.email, `%${f.q}%`), ilike(target.name, `%${f.q}%`),
+        ilike(auditLogs.summary, `%${f.q}%`),
+      ) : undefined,
     );
-    const from = () => this.db.select().from(auditLogs)
+    const select = () => this.db.select().from(auditLogs)
       .leftJoin(actor, eq(actor.id, auditLogs.actorId))
-      .leftJoin(target, and(eq(auditLogs.targetType, 'user'), eq(sql`${target.id}::text`, auditLogs.targetId)));
-    const rows = await from().where(where).orderBy(desc(auditLogs.createdAt))
-      .limit(PAGE_SIZE).offset((page - 1) * PAGE_SIZE);
-    const [{ total }] = await this.db.select({ total: count() }).from(auditLogs)
+      .leftJoin(target, and(eq(auditLogs.targetType, 'user'), eq(sql`${target.id}::text`, auditLogs.targetId)))
+      .where(where);
+    const total = () => this.db.select({ total: count() }).from(auditLogs)
       .leftJoin(actor, eq(actor.id, auditLogs.actorId))
       .leftJoin(target, and(eq(auditLogs.targetType, 'user'), eq(sql`${target.id}::text`, auditLogs.targetId)))
       .where(where);
     const person = (u: typeof user.$inferSelect | null) => (u ? { id: u.id, name: u.name, email: u.email } : null);
-    const items = rows.map((r) => ({
-      ...r.audit_logs,
-      actor: person(r.actor),
-      targetUser: person(r.target),
-    }));
-    return { items, total, page, pageSize: PAGE_SIZE };
+    const toView = (r: Awaited<ReturnType<typeof select>>[number]) => ({
+      ...r.audit_logs, actor: person(r.actor), targetUser: person(r.target),
+    });
+    return { select, total, toView };
+  }
+
+  async auditLogs({ page, ...filter }: z.infer<typeof auditListSchema>) {
+    const q = this.auditQuery(filter);
+    const rows = await q.select().orderBy(desc(auditLogs.createdAt)).limit(PAGE_SIZE).offset((page - 1) * PAGE_SIZE);
+    const [{ total }] = await q.total();
+    return { items: rows.map(q.toView), total, page, pageSize: PAGE_SIZE };
+  }
+
+  /** CSV do recorte filtrado. A própria exportação entra na trilha: é saída de dados pessoais. */
+  async exportAuditLogs(actorId: string, filter: AuditFilter) {
+    const q = this.auditQuery(filter);
+    const [{ total }] = await q.total();
+    if (total > AUDIT_EXPORT_LIMIT) {
+      throw new BadRequestException(`O filtro traz ${total} registros. Refine para até ${AUDIT_EXPORT_LIMIT} antes de exportar.`);
+    }
+    const rows = (await q.select().orderBy(desc(auditLogs.createdAt)).limit(AUDIT_EXPORT_LIMIT)).map(q.toView);
+    await recordAudit({
+      actorId, action: 'audit.exported', targetType: 'audit',
+      summary: `${rows.length} registros exportados`, metadata: { filter },
+    });
+    const header = ['data', 'acao', 'descricao', 'autor', 'papel_do_autor', 'alvo', 'id_do_alvo', 'usuario_alvo', 'resumo', 'alteracoes', 'ip', 'requisicao'];
+    const lines = rows.map((r) => [
+      r.createdAt.toISOString(), r.action, auditActionLabel(r.action), r.actor?.email ?? 'sistema', r.actorRole,
+      r.targetType, r.targetId, r.targetUser?.email, r.summary, r.changes,
+      (r.metadata as { ip?: string } | null)?.ip, r.requestId,
+    ].map(csvCell).join(','));
+    // BOM: sem ele o Excel abre acentos quebrados.
+    return `\uFEFF${[header.join(','), ...lines].join('\r\n')}`;
   }
 }
 
@@ -313,6 +391,12 @@ class AdminController {
 
   @Get('audit-logs')
   audit(@Query(new ZodPipe(auditListSchema)) q: z.infer<typeof auditListSchema>) { return this.service.auditLogs(q); }
+
+  @Get('audit-logs/export')
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  @Header('Content-Disposition', 'attachment; filename="auditoria.csv"')
+  @Header('Cache-Control', 'no-store')
+  exportAudit(@UserId() a: string, @Query(new ZodPipe(auditFilterSchema)) q: AuditFilter) { return this.service.exportAuditLogs(a, q); }
 }
 
 @Module({ controllers: [AdminController], providers: [AdminService] })

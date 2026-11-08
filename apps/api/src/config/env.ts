@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AUDIT_MIN_RETENTION_MONTHS } from '@ergatis/shared';
 
 // Em produção as variáveis vêm do ambiente; o arquivo é opcional.
 try { process.loadEnvFile(); } catch { /* sem .env */ }
@@ -36,6 +37,8 @@ const schema = z.object({
   SEED_PASSWORD: blankAsUndefined(z.string().min(8).optional()),
   SEED_NAME: blankAsUndefined(z.string().optional()),
   SEED_ROLE: z.enum(['user', 'admin']).default('user'),
+  /** Meses de auditoria guardados. O Marco Civil (art. 15) exige ao menos 6 para registros de acesso. */
+  AUDIT_RETENTION_MONTHS: z.coerce.number().int().min(AUDIT_MIN_RETENTION_MONTHS).max(120).default(12),
 }).superRefine((v, ctx) => {
   if (Boolean(v.SEED_USER) !== Boolean(v.SEED_PASSWORD)) {
     ctx.addIssue({ code: 'custom', path: ['SEED_USER'], message: 'Informe SEED_USER e SEED_PASSWORD juntos' });

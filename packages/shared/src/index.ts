@@ -1,3 +1,4 @@
+export * from './audit';
 export * from './entitlements';
 export * from './enums';
 export * from './files';

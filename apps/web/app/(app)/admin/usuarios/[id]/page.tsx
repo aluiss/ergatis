@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'next/navigation';
 import { ErrorState, Loading, post, StatusBadge, useAction } from '@/components/app-ui';
+import { AuditHistory } from '@/components/audit';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -79,6 +80,8 @@ export default function UserDetail() {
           ))}
         </ul>
       </section>
+
+      <AuditHistory userId={id} />
 
       <section>
         <h2 className="mb-2 font-semibold">Assinaturas</h2>

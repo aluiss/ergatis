@@ -1,3 +1,4 @@
+import { recordAudit } from '../audit/audit';
 import {
   BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException,
 } from '@nestjs/common';
@@ -9,7 +10,7 @@ import {
 } from '@ergatis/shared';
 import { InjectDb } from '../common/db.module';
 import type { Db } from '../db/client';
-import { auditLogs, files, professionals, profiles } from '../db/schema';
+import { files, professionals, profiles } from '../db/schema';
 import { processPublicImage } from './image';
 import { STORAGE, type Storage } from './storage';
 
@@ -132,7 +133,7 @@ export class FilesService {
       const isAdmin = viewer?.role === 'admin';
       if (!isOwner && !isAdmin) throw new NotFoundException('Arquivo não encontrado');
       if (!isOwner) {
-        await this.db.insert(auditLogs).values({
+        await recordAudit({
           actorId: viewer!.id, action: 'document.viewed', targetType: 'user', targetId: file.ownerId, metadata: { fileId: id },
         });
       }

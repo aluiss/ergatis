@@ -1,3 +1,5 @@
+import { annotateAudit } from '../audit/audit-context';
+import { diff } from '../audit/audit-policy';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { and, asc, avg, count, desc, eq, sql, type SQL } from 'drizzle-orm';
 import type { ProfessionalSetupInput, SearchProfessionalsInput } from '@ergatis/shared';
@@ -16,6 +18,9 @@ export class ProfessionalsService {
   ) {}
 
   async setup(userId: string, input: ProfessionalSetupInput) {
+    const [before] = await this.db.select().from(professionals).where(eq(professionals.userId, userId));
+    const beforeCategories = (await this.db.select({ id: professionalCategories.categoryId }).from(professionalCategories)
+      .where(eq(professionalCategories.professionalId, userId))).map((c) => c.id).sort();
     await this.db.transaction(async (tx) => {
       await tx.insert(professionals)
         .values({ userId, headline: input.headline, serviceRadiusKm: input.serviceRadiusKm })
@@ -26,6 +31,13 @@ export class ProfessionalsService {
       await tx.delete(professionalCategories).where(eq(professionalCategories.professionalId, userId));
       await tx.insert(professionalCategories)
         .values(input.categoryIds.map((categoryId) => ({ professionalId: userId, categoryId })));
+    });
+    annotateAudit({
+      summary: before ? undefined : 'Perfil profissional criado',
+      changes: diff(
+        before ? { ...before, categoryIds: beforeCategories } : null,
+        { headline: input.headline, serviceRadiusKm: input.serviceRadiusKm, categoryIds: [...input.categoryIds].sort() },
+      ),
     });
     return this.getPublic(userId);
   }

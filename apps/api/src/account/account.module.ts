@@ -3,13 +3,16 @@ import {
 } from '@nestjs/common';
 import { and, eq, or } from 'drizzle-orm';
 import { updateProfileSchema, type UpdateProfileInput } from '@ergatis/shared';
+import { recordAudit } from '../audit/audit';
+import { annotateAudit } from '../audit/audit-context';
+import { diff } from '../audit/audit-policy';
 import { InjectDb } from '../common/db.module';
 import { Audit, SkipAudit } from '../audit/audit.interceptor';
 import { UserId } from '../common/user-id.decorator';
 import { ZodPipe } from '../common/zod.pipe';
 import type { Db } from '../db/client';
 import {
-  account, auditLogs, engagements, legalAcceptances, professionalCategories, professionals, profiles, proposalUsage, reviews, serviceRequests, session,
+  account, engagements, legalAcceptances, professionalCategories, professionals, profiles, proposalUsage, reviews, serviceRequests, session,
   subscriptions, user,
 } from '../db/schema';
 import { EntitlementsService } from '../entitlements/entitlements.service';
@@ -41,7 +44,9 @@ class AccountService {
   }
 
   async update(userId: string, input: UpdateProfileInput) {
+    const [before] = await this.db.select().from(profiles).where(eq(profiles.userId, userId));
     const [updated] = await this.db.update(profiles).set(input).where(eq(profiles.userId, userId)).returning();
+    annotateAudit({ changes: diff(before, updated, Object.keys(input)) });
     return updated;
   }
 
@@ -89,7 +94,7 @@ class AccountService {
       }).where(eq(user.id, userId));
       await tx.delete(session).where(eq(session.userId, userId));
       await tx.delete(account).where(eq(account.userId, userId));
-      await tx.insert(auditLogs).values({ actorId: userId, action: 'account.deleted', targetType: 'user', targetId: userId });
+      await recordAudit({ actorId: userId, action: 'account.deleted', targetType: 'user', targetId: userId }, tx);
     });
     await this.files.removeAll(userId);
     return { ok: true };

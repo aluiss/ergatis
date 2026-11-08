@@ -3,12 +3,14 @@ import { LEGAL_VERSION } from '@ergatis/shared';
 import { type INestApplication, RequestMethod } from '@nestjs/common';
 import { METHOD_METADATA } from '@nestjs/common/constants';
 import { ModulesContainer } from '@nestjs/core';
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, sql } from 'drizzle-orm';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AUDIT_KEY, SKIP_AUDIT_KEY } from '../src/audit/audit.interceptor';
 import { db } from '../src/db/client';
 import { auditLogs } from '../src/db/schema';
+import { AuditRetentionService } from '../src/audit/audit-retention.service';
+import { diff, redact } from '../src/audit/audit-policy';
 import { api, createApp, makeAdmin, makeRequest, signUp } from './helpers';
 
 let app: INestApplication;
@@ -119,3 +121,81 @@ describe('ações de negócio', () => {
     expect(onlyAuth.body.items.every((i: { action: string }) => i.action.startsWith('user.'))).toBe(true);
   });
 });
+
+describe('contexto, diff e política de dados', () => {
+  it('liga pelo requestId o cadastro ao e-mail de confirmação, com navegador e papel do autor', async () => {
+    const res = await request(app.getHttpServer()).post('/api/auth/sign-up/email').set('Origin', ORIGIN).set('User-Agent', 'teste-auditoria/1.0')
+      .send({ name: 'Contexto', email: `${randomUUID()}@teste.dev`, password: 'senha-forte-123', termsVersion: LEGAL_VERSION });
+    const id = res.body.user.id as string;
+    const logs = await logsFor(id);
+    const created = logs.find((l) => l.action === 'user.created')!;
+    const mail = logs.find((l) => l.action === 'email.not_sent')!;
+    expect(created.requestId).toBeTruthy();
+    expect(mail.requestId).toBe(created.requestId);
+    expect(created.actorRole).toBe('user');
+    expect(created.metadata).toMatchObject({ userAgent: 'teste-auditoria/1.0', method: 'POST', route: '/api/auth/sign-up/email' });
+  });
+
+  it('grava os campos alterados do perfil, mascarando o telefone', async () => {
+    const actor = await signUp(app);
+    await api(app, actor).patch('/me', { displayName: 'Nome Novo', phone: '+55 11 99999-1234' });
+    const [log] = (await logsFor(actor.id)).filter((l) => l.action === 'profile.updated');
+    expect(log.changes).toEqual(expect.arrayContaining([
+      { field: 'displayName', from: 'Pessoa Teste', to: 'Nome Novo' },
+      { field: 'phone', from: null, to: '***34' },
+    ]));
+    expect(JSON.stringify(log)).not.toContain('99999');
+  });
+
+  it('a mudança de papel guarda de onde veio e para onde foi', async () => {
+    const admin = await signUp(app);
+    await makeAdmin(admin);
+    const target = await signUp(app);
+    expect((await api(app, admin).post(`/admin/users/${target.id}/role`, { role: 'admin' })).status).toBe(201);
+    const [log] = (await logsFor(target.id)).filter((l) => l.action === 'user.role_changed');
+    expect(log).toMatchObject({ actorId: admin.id, actorRole: 'admin', changes: [{ field: 'role', from: 'user', to: 'admin' }] });
+  });
+
+  it('a política omite segredos e mascara dados pessoais', () => {
+    expect(redact({ password: 'x', nested: { accessToken: 'y', phone: '11999998888' }, ok: 1 }))
+      .toEqual({ password: '[omitido]', nested: { accessToken: '[omitido]', phone: '***88' }, ok: 1 });
+    expect(diff({ a: 1, b: 2 }, { a: 1, b: 3 })).toEqual([{ field: 'b', from: 2, to: 3 }]);
+    expect(diff({ newPassword: 'a' }, { newPassword: 'b' })).toEqual([{ field: 'newPassword', from: '[omitido]', to: '[omitido]' }]);
+  });
+});
+
+describe('consulta, exportação e retenção', () => {
+  it('filtra pela pessoa (o que fez e o que sofreu) e exporta CSV, auditando a exportação', async () => {
+    const admin = await signUp(app);
+    await makeAdmin(admin);
+    const someone = await signUp(app);
+    await api(app, admin).post(`/admin/users/${someone.id}/ban`, { reason: 'Teste de exportação' });
+
+    const list = await api(app, admin).get(`/admin/audit-logs?userId=${someone.id}`);
+    const actions = list.body.items.map((i: { action: string }) => i.action);
+    expect(actions).toEqual(expect.arrayContaining(['user.created', 'user.banned']));
+
+    const csv = await api(app, admin).get(`/admin/audit-logs/export?userId=${someone.id}`);
+    expect(csv.status).toBe(200);
+    expect(csv.headers['content-type']).toContain('text/csv');
+    expect(csv.text).toContain('Usuário banido');
+    expect(csv.text).toContain(someone.email);
+    const exported = await db.select().from(auditLogs).where(eq(auditLogs.actorId, admin.id));
+    expect(exported.map((l) => l.action)).toContain('audit.exported');
+
+    const from = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+    expect((await api(app, admin).get(`/admin/audit-logs?userId=${someone.id}&from=${from}`)).body.total).toBe(0);
+    expect((await api(app, admin).get('/admin/audit-logs/export?userId=nao-e-uuid')).status).toBe(400);
+  });
+
+  it('o expurgo remove só o que passou do prazo', async () => {
+    const actor = await signUp(app);
+    const [old] = await db.insert(auditLogs).values({ action: 'auth.signed_in', targetType: 'user', targetId: actor.id, createdAt: new Date('2000-01-01') }).returning();
+    const removed = await app.get(AuditRetentionService).purgeExpired();
+    expect(removed).toBeGreaterThanOrEqual(1);
+    expect(await db.select().from(auditLogs).where(eq(auditLogs.id, old.id))).toEqual([]);
+    const [{ recent }] = await db.select({ recent: sql<number>`count(*)::int` }).from(auditLogs).where(eq(auditLogs.targetId, actor.id));
+    expect(recent).toBeGreaterThan(0);
+  });
+});
+

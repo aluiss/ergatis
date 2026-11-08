@@ -5,6 +5,7 @@ import { admin } from 'better-auth/plugins';
 import { eq } from 'drizzle-orm';
 import { LEGAL_VERSION } from '@ergatis/shared';
 import { maskEmail, recordAudit } from '../audit/audit';
+import { getAuditContext } from '../audit/audit-context';
 import { env } from '../config/env';
 import { db } from '../db/client';
 import * as schema from '../db/schema';
@@ -13,10 +14,14 @@ import { sendMail } from '../mail/mail';
 type HeaderSource = { request?: Request; headers?: Headers } | null | undefined;
 
 /**
- * IP do cliente pela mesma regra do `trust proxy` do Express: cada proxy confiável
- * acrescenta um endereço no fim do x-forwarded-for; o que vem antes pode ser forjado.
+ * IP do cliente. Dentro de uma requisição, o do contexto de auditoria (`req.ip`, que
+ * respeita o `trust proxy`). Fora dela, a mesma regra aplicada ao cabeçalho: cada
+ * proxy confiável acrescenta um endereço no fim do x-forwarded-for; o que vem antes
+ * pode ser forjado.
  */
 export function clientIp(ctx: HeaderSource) {
+  const fromContext = getAuditContext()?.ip;
+  if (fromContext) return fromContext.slice(0, 64);
   const header = (ctx?.request?.headers ?? ctx?.headers)?.get('x-forwarded-for');
   if (!header) return undefined;
   const chain = header.split(',').map((v) => v.trim()).filter(Boolean);
@@ -47,7 +52,6 @@ export const auth = betterAuth({
     onPasswordReset: async ({ user }, request) => {
       await recordAudit({
         actorId: user.id, action: 'auth.password_reset', targetType: 'user', targetId: user.id,
-        metadata: { ip: clientIp({ request }) },
       });
     },
   },
@@ -60,7 +64,6 @@ export const auth = betterAuth({
     afterEmailVerification: async (user, request) => {
       await recordAudit({
         actorId: user.id, action: 'auth.email_verified', targetType: 'user', targetId: user.id,
-        metadata: { ip: clientIp({ request }) },
       });
     },
   },
@@ -78,14 +81,13 @@ export const auth = betterAuth({
       if (current) {
         await recordAudit({
           actorId: current.user.id, action: 'auth.signed_out', targetType: 'user', targetId: current.user.id,
-          metadata: { ip: clientIp(ctx) },
         });
       }
     }),
     after: createAuthMiddleware(async (ctx) => {
       const failed = ctx.context.returned instanceof APIError;
       const email = (ctx.body as { email?: unknown } | undefined)?.email;
-      const base = { ip: clientIp(ctx), ...(typeof email === 'string' ? { email: maskEmail(email) } : {}) };
+      const base = typeof email === 'string' ? { email: maskEmail(email) } : {};
       const reason = failed ? (ctx.context.returned as APIError).body?.code ?? (ctx.context.returned as APIError).status : undefined;
 
       if (ctx.path === '/sign-in/email' && failed) {
@@ -101,7 +103,7 @@ export const auth = betterAuth({
           action: 'auth.password_reset_requested', targetType: 'user', targetId: await userIdByEmail(email), metadata: base,
         });
       } else if (ctx.path === '/reset-password' && failed) {
-        await recordAudit({ action: 'auth.password_reset_failed', targetType: 'user', metadata: { ip: base.ip, reason } });
+        await recordAudit({ action: 'auth.password_reset_failed', targetType: 'user', metadata: { reason } });
       }
     }),
   },
@@ -123,7 +125,7 @@ export const auth = betterAuth({
           const creator = viaSignUp ? created.id : ((ctx?.context as { session?: { user?: { id?: string } } } | undefined)?.session?.user?.id ?? null);
           await recordAudit({
             actorId: creator, action: 'user.created', targetType: 'user', targetId: created.id,
-            metadata: { ip: ipAddress, via: ctx?.path ?? 'servidor', termsVersion: LEGAL_VERSION },
+            metadata: { via: ctx?.path ?? 'servidor', termsVersion: LEGAL_VERSION },
           });
         },
       },
@@ -136,7 +138,7 @@ export const auth = betterAuth({
             actorId: s.impersonatedBy ?? s.userId,
             action: s.impersonatedBy ? 'auth.impersonation_started' : 'auth.signed_in',
             targetType: 'user', targetId: s.userId,
-            metadata: { ip: clientIp(ctx), via: ctx?.path },
+            metadata: { via: ctx?.path },
           });
         },
       },

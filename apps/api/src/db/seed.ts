@@ -3,7 +3,8 @@ import { BASIC_ENTITLEMENTS, LEGAL_VERSION, type Entitlements, type PlanCode } f
 import { auth } from '../auth/auth';
 import { env } from '../config/env';
 import { db, pool } from './client';
-import { auditLogs, categories, plans, user } from './schema';
+import { recordAudit } from '../audit/audit';
+import { categories, plans, user } from './schema';
 
 const PRO: Entitlements = { ...BASIC_ENTITLEMENTS, monthlyProposalLimit: null, showCompletedServices: true };
 const PREMIUM: Entitlements = { ...PRO, searchHighlight: true, badge: true, viewClientRating: true };
@@ -50,7 +51,7 @@ async function seedUser() {
   }
   await db.update(user).set({ role: env.SEED_ROLE, emailVerified: true }).where(eq(user.id, id));
   if (env.SEED_ROLE === 'admin' && existing?.role !== 'admin') {
-    await db.insert(auditLogs).values({ action: 'user.made_admin_seed', targetType: 'user', targetId: id });
+    await recordAudit({ action: 'user.made_admin_seed', targetType: 'user', targetId: id, changes: [{ field: 'role', from: existing?.role ?? null, to: 'admin' }] });
   }
   console.log(`Usuário ${existing ? 'atualizado' : 'criado'}: ${email} (${env.SEED_ROLE}).`);
 }

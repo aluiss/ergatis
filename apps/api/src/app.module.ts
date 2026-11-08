@@ -4,6 +4,7 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AuthModule } from '@thallesp/nestjs-better-auth';
 import { AccountModule } from './account/account.module';
 import { AdminModule } from './admin/admin.module';
+import { AuditRetentionService } from './audit/audit-retention.service';
 import { AuditInterceptor } from './audit/audit.interceptor';
 import { auth } from './auth/auth';
 import { BillingModule } from './billing/billing.module';
@@ -44,6 +45,7 @@ import { RequestsModule } from './requests/requests.module';
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },
+    AuditRetentionService,
   ],
 })
 export class AppModule {}

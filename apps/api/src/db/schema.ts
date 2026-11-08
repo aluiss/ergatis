@@ -326,13 +326,24 @@ export const reports = pgTable('reports', {
 
 export const auditLogs = pgTable('audit_logs', {
   id: id(),
+  /** Liga as linhas geradas por uma mesma requisição. */
+  requestId: varchar({ length: 64 }),
   actorId: uuid().references(() => user.id, { onDelete: 'set null' }),
+  /** Papel do autor no momento da ação: o atual pode já ser outro. */
+  actorRole: varchar({ length: 20 }),
   action: varchar({ length: 80 }).notNull(),
   targetType: varchar({ length: 40 }).notNull(),
   targetId: varchar({ length: 80 }),
+  /** Frase legível sobre o que aconteceu, quando o rótulo da ação não basta. */
+  summary: varchar({ length: 255 }),
+  /** Campos alterados: [{ field, from, to }], já com a política de dados sensíveis aplicada. */
+  changes: jsonb().$type<{ field: string; from: unknown; to: unknown }[]>(),
   metadata: jsonb(),
   createdAt: createdAt(),
 }, (t) => [
-  index('audit_actor_idx').on(t.actorId),
-  index('audit_target_idx').on(t.targetType, t.targetId),
+  index('audit_actor_idx').on(t.actorId, t.createdAt),
+  index('audit_target_idx').on(t.targetType, t.targetId, t.createdAt),
+  index('audit_action_idx').on(t.action, t.createdAt),
+  index('audit_created_idx').on(t.createdAt),
+  index('audit_request_idx').on(t.requestId),
 ]);
