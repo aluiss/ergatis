@@ -106,7 +106,7 @@ export default function Profile() {
       {pro && <PortfolioCard />}
       {pro && <VerificationCard status={pro.verification} />}
 
-      <Card>
+      <Card id="privacidade" className="scroll-mt-20">
         <CardHeader><CardTitle>Privacidade</CardTitle></CardHeader>
         <CardContent className="flex flex-wrap gap-2">
           <Button variant="outline" loading={exporting} onClick={download}>Baixar meus dados</Button>

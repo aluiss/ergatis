@@ -1,6 +1,6 @@
 import {
   BadgeCheck, Briefcase, ClipboardList, CreditCard, FileClock, Flag, Gauge, Handshake, House, MessageCircle,
-  PlusCircle, Receipt, Search, Send, User, Users, Wrench, type LucideIcon,
+  PlusCircle, Receipt, Search, Send, Settings, User, Users, Wrench, type LucideIcon,
 } from 'lucide-react';
 
 /**
@@ -44,6 +44,7 @@ export const ITEMS = {
   mensagens: { id: 'mensagens', label: 'Mensagens', href: '/mensagens', icon: MessageCircle, counter: 'messages', keywords: 'conversas chat' },
   perfil: { id: 'perfil', label: 'Perfil', href: '/perfil', icon: User, keywords: 'foto dados portfólio' },
   planos: { id: 'planos', label: 'Planos', href: '/planos', icon: CreditCard, keywords: 'assinatura premium' },
+  configuracoes: { id: 'configuracoes', label: 'Configurações', href: '/configuracoes', icon: Settings, keywords: 'tema escuro claro instalar app celular aparência' },
   admin: { id: 'admin', label: 'Administração', href: '/admin', icon: Gauge, visible: (c) => c.isAdmin },
 } satisfies Record<string, NavItem>;
 
@@ -52,7 +53,7 @@ export const APP_NAV: NavGroup[] = [
   { id: 'contratar', label: 'Contratar', items: [ITEMS.pedidos, ITEMS.novoPedido, ITEMS.contratacoes, ITEMS.profissionais] },
   { id: 'trabalhar', label: 'Trabalhar', items: [ITEMS.oportunidades, ITEMS.propostas, ITEMS.oferecer] },
   { id: 'conversas', label: 'Conversas', items: [ITEMS.mensagens] },
-  { id: 'conta', label: 'Conta', items: [ITEMS.perfil, ITEMS.planos] },
+  { id: 'conta', label: 'Conta', items: [ITEMS.perfil, ITEMS.planos, ITEMS.configuracoes] },
   { id: 'administracao', label: 'Administração', items: [ITEMS.admin], visible: (c) => c.isAdmin },
 ];
 
