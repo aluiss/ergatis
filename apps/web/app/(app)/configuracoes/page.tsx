@@ -1,4 +1,4 @@
-import { ChevronRight, FileText, Shield, Smartphone, SunMoon, User } from 'lucide-react';
+import { ChevronRight, FileText, Shield, ShieldCheck, Smartphone, SunMoon, User } from 'lucide-react';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { InstallGuide } from '@/components/install-guide';
@@ -25,6 +25,7 @@ function Section({ id, icon: Icon, title, description, children }: {
 
 const LINKS = [
   { href: '/perfil', icon: User, label: 'Perfil e dados pessoais', hint: 'Nome, telefone, foto e avisos por e-mail' },
+  { href: '/perfil#seguranca', icon: ShieldCheck, label: 'Login em duas etapas', hint: 'Código do celular além da senha' },
   { href: '/perfil#privacidade', icon: Shield, label: 'Privacidade', hint: 'Baixar seus dados ou excluir a conta' },
   { href: '/termos', icon: FileText, label: 'Termos de Uso', hint: undefined },
   { href: '/privacidade', icon: FileText, label: 'Política de Privacidade', hint: undefined },

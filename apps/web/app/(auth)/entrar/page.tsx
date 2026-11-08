@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { authClient } from '@/lib/auth-client';
+import { authClient, safeNext } from '@/lib/auth-client';
 
 function LoginForm() {
   const params = useSearchParams();
@@ -16,16 +16,21 @@ function LoginForm() {
 
   async function submit(form: FormData) {
     setPending(true);
-    const { error } = await authClient.signIn.email({
+    const { data, error } = await authClient.signIn.email({
       email: String(form.get('email')), password: String(form.get('password')),
     });
-    setPending(false);
     if (error) {
+      setPending(false);
       toast.error(error.status === 403 ? 'Confirme seu e-mail antes de entrar.' : 'E-mail ou senha incorretos.');
       return;
     }
-    const next = params.get('next');
-    window.location.href = next?.startsWith('/') && !next.startsWith('//') ? next : '/painel';
+    const next = safeNext(params.get('next'));
+    // Conta com login em duas etapas: a senha estava certa, falta o código.
+    if (data && 'twoFactorRedirect' in data && data.twoFactorRedirect) {
+      window.location.href = `/entrar/verificacao?${new URLSearchParams({ next })}`;
+      return;
+    }
+    window.location.href = next;
   }
 
   return (
@@ -33,7 +38,7 @@ function LoginForm() {
       <CardHeader><CardTitle>Entrar</CardTitle></CardHeader>
       <CardContent>
         <form action={submit} className="space-y-4">
-          <div className="space-y-1"><Label htmlFor="email">E-mail</Label><Input id="email" name="email" type="email" autoComplete="email" required /></div>
+          <div className="space-y-1"><Label htmlFor="email">E-mail</Label><Input id="email" name="email" type="email" inputMode="email" autoComplete="email" required /></div>
           <div className="space-y-1"><Label htmlFor="password">Senha</Label><Input id="password" name="password" type="password" autoComplete="current-password" required /></div>
           <Button className="w-full" loading={pending}>{pending ? 'Entrando...' : 'Entrar'}</Button>
         </form>

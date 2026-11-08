@@ -35,12 +35,28 @@ export const user = pgTable('user', {
   banReason: text(),
   banExpires: timestamp(tz),
   termsVersion: text(),
+  /** Login em duas etapas ativo (plugin twoFactor do Better Auth). */
+  twoFactorEnabled: boolean().default(false),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, (t) => [
   // Papéis válidos também no banco: o plugin do Better Auth ou um UPDATE manual não criam um papel inventado.
   check('user_role_check', sql`${t.role} is null or ${t.role} in ('user', 'owner', 'admin', 'moderacao', 'suporte', 'financeiro', 'juridico')`),
 ]);
+
+/**
+ * Segredo do app autenticador e códigos de recuperação, ambos cifrados pelo Better Auth
+ * (nunca devolvidos pela API). `verified` fica falso até o primeiro código confirmar a ativação.
+ */
+export const twoFactor = pgTable('two_factor', {
+  id: id(),
+  secret: text().notNull(),
+  backupCodes: text().notNull(),
+  userId: uuid().notNull().references(() => user.id, { onDelete: 'cascade' }),
+  verified: boolean().default(true),
+  failedVerificationCount: integer().default(0),
+  lockedUntil: timestamp(tz),
+}, (t) => [index('two_factor_user_idx').on(t.userId), index('two_factor_secret_idx').on(t.secret)]);
 
 export const session = pgTable('session', {
   id: id(),

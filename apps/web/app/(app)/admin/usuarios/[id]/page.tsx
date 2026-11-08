@@ -19,7 +19,7 @@ import { date } from '@/lib/format';
 
 interface Grant { id: string; planCode: string | null; reason: string; endsAt: string | null; revokedAt: string | null; createdAt: string }
 interface Detail {
-  name: string; email: string; role: string; banned: boolean; banReason: string | null;
+  name: string; email: string; role: string; banned: boolean; banReason: string | null; twoFactorEnabled: boolean | null;
   access: { plan: string };
   subscriptions: { id: string; planCode: string; status: string; currentPeriodEnd: string | null }[];
   grants: Grant[];
@@ -40,6 +40,7 @@ export default function UserDetail() {
   }, { ...keys, success: 'Cortesia concedida.' });
   const revoke = useAction((gid: string) => api(`/admin/grants/${gid}`, { method: 'DELETE' }), { ...keys, success: 'Cortesia revogada.' });
   const ban = useAction((reason: string) => post(`/admin/users/${id}/ban`, { reason }), { ...keys, success: 'Usuário banido.' });
+  const resetTwoFactor = useAction((reason: string) => post(`/admin/users/${id}/two-factor/reset`, { reason }), { ...keys, success: 'Login em duas etapas redefinido. A pessoa foi avisada por e-mail.' });
   const unban = useAction(() => post(`/admin/users/${id}/unban`), { ...keys, success: 'Banimento removido.' });
   const role = useAction((r: string) => post(`/admin/users/${id}/role`, { role: r }), { ...keys, success: 'Papel alterado.' });
 
@@ -53,7 +54,10 @@ export default function UserDetail() {
         <h1 className="text-2xl font-bold">{u.name}</h1>
         <p className="text-muted-foreground text-sm">{u.email} · plano efetivo: <b className="capitalize">{u.access.plan}</b></p>
         {u.banned && <p className="text-destructive mt-1 text-sm">Banido: {u.banReason}</p>}
-        <p className="mt-1"><Badge variant={isStaffRole(u.role) ? 'default' : 'secondary'}>{ROLE_LABELS[u.role as UserRole] ?? u.role}</Badge></p>
+        <p className="mt-1 flex flex-wrap gap-1.5">
+          <Badge variant={isStaffRole(u.role) ? 'default' : 'secondary'}>{ROLE_LABELS[u.role as UserRole] ?? u.role}</Badge>
+          <Badge variant={u.twoFactorEnabled ? 'default' : 'outline'}>{u.twoFactorEnabled ? 'Login em duas etapas ativo' : 'Sem login em duas etapas'}</Badge>
+        </p>
         {can('admin.users', 'edit') && <div className="mt-3 flex flex-wrap gap-2">
           {u.banned ? (
             <ConfirmAction
@@ -76,6 +80,20 @@ export default function UserDetail() {
             </ConfirmAction>
           )}
 
+          {u.twoFactorEnabled && (
+            <ConfirmAction
+              title={`Redefinir o login em duas etapas de ${u.name}?`}
+              description={<>
+                <p>Só para quem perdeu o celular e os códigos de recuperação, <b>depois de confirmar a identidade por outro meio</b> (documento, chamada de vídeo).</p>
+                <p className="mt-2">A pessoa sai de todos os aparelhos, passa a entrar só com a senha e recebe um aviso por e-mail.</p>
+              </>}
+              confirmLabel="Redefinir" destructive
+              reason={{ label: 'Como a identidade foi confirmada', required: true, minLength: 3, maxLength: 500, placeholder: 'Ex.: chamada de vídeo com documento em 08/11' }}
+              onConfirm={(reason) => resetTwoFactor.mutateAsync(reason!)}
+            >
+              <Button size="sm" variant="outline">Redefinir login em duas etapas</Button>
+            </ConfirmAction>
+          )}
         </div>}
         <div className="mt-4"><RoleControl name={u.name} current={(u.role ?? 'user') as UserRole} onChange={(r) => role.mutateAsync(r)} /></div>
       </div>

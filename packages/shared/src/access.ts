@@ -104,6 +104,8 @@ export interface ResolvedAccess {
   isOwner: boolean;
   isStaff: boolean;
   resources: Grants;
+  /** Da equipe, sem login em duas etapas, com a regra ligada: a administração fica bloqueada até ativar. */
+  mustEnableTwoFactor?: boolean;
 }
 
 /** `edit` cobre `view`. Proprietário pode tudo. */

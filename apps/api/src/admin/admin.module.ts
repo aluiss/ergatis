@@ -13,6 +13,7 @@ import { AccessService } from '../access/access.service';
 import { RequireAccess, RequireAccessBy } from '../access/require-access';
 import { SessionUser } from '../access/session-user.decorator';
 import { recordAudit } from '../audit/audit';
+import { sendMail } from '../mail/mail';
 import { VerificationService } from '../verification/verification.service';
 import { diff } from '../audit/audit-policy';
 import { SkipAudit } from '../audit/audit.interceptor';
@@ -21,7 +22,7 @@ import { ZodPipe } from '../common/zod.pipe';
 import type { Db, DbOrTx } from '../db/client';
 import {
   auditLogs, engagements, entitlementGrants, files, plans, professionals, reports, serviceRequests,
-  session, subscriptions, user,
+  session, subscriptions, twoFactor, user,
 } from '../db/schema';
 import { EntitlementsService } from '../entitlements/entitlements.service';
 import { FilesService } from '../files/files.service';
@@ -169,6 +170,7 @@ class AdminService {
       .select({
         id: user.id, name: user.name, email: user.email, role: user.role,
         banned: user.banned, banReason: user.banReason, createdAt: user.createdAt,
+        twoFactorEnabled: user.twoFactorEnabled,
       })
       .from(user).where(eq(user.id, id));
     if (!found) throw new NotFoundException('Usuário não encontrado');
@@ -193,6 +195,29 @@ class AdminService {
       });
       return { ok: true };
     });
+  }
+
+  /**
+   * Para quem perdeu o celular e os códigos de recuperação. Só depois de confirmar a
+   * identidade por outro meio: quem passar por aqui entra só com a senha. Derruba as
+   * sessões e avisa a pessoa por e-mail (se não foi ela quem pediu, ela fica sabendo).
+   */
+  async resetTwoFactor(actorId: string, id: string, reason: string) {
+    if (id === actorId) throw new BadRequestException('Você não pode alterar a própria conta');
+    const target = await this.db.transaction(async (tx) => {
+      const [found] = await tx.select({ email: user.email, enabled: user.twoFactorEnabled }).from(user).where(eq(user.id, id));
+      if (!found) throw new NotFoundException('Usuário não encontrado');
+      if (!found.enabled) throw new BadRequestException('Esta pessoa não usa login em duas etapas');
+      await tx.delete(twoFactor).where(eq(twoFactor.userId, id));
+      await tx.update(user).set({ twoFactorEnabled: false }).where(eq(user.id, id));
+      await tx.delete(session).where(eq(session.userId, id));
+      await this.audit(tx, actorId, 'auth.two_factor_reset', 'user', id, { summary: `Redefinido: ${reason}`, changes: [{ field: 'twoFactorEnabled', from: true, to: false }] });
+      return found;
+    });
+    await sendMail(target.email, 'Seu login em duas etapas foi desativado',
+      'A equipe do Ergatis desativou o login em duas etapas da sua conta, a seu pedido. Entre com sua senha e ative de novo em Perfil › Segurança.\n\nSe você não pediu isso, responda este e-mail agora.', { userId: id })
+      .catch(() => undefined);
+    return { ok: true };
   }
 
   ban(actorId: string, id: string, reason: string) { return this.setBan(actorId, id, true, reason); }
@@ -423,6 +448,11 @@ class AdminController {
   @Post('users/:id/ban') @RequireAccess('admin.users', 'edit')
   ban(@UserId() a: string, @Param('id', ParseUUIDPipe) id: string, @Body(new ZodPipe(banSchema)) b: z.infer<typeof banSchema>) {
     return this.service.ban(a, id, b.reason);
+  }
+
+  @Post('users/:id/two-factor/reset') @RequireAccess('admin.users', 'edit')
+  resetTwoFactor(@UserId() a: string, @Param('id', ParseUUIDPipe) id: string, @Body(new ZodPipe(banSchema)) b: z.infer<typeof banSchema>) {
+    return this.service.resetTwoFactor(a, id, b.reason);
   }
 
   @Post('users/:id/unban') @RequireAccess('admin.users', 'edit')

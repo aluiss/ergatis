@@ -4,18 +4,21 @@ import { ACCESS_LEVELS } from '@ergatis/shared';
 import { SkipAudit } from '../audit/audit.interceptor';
 import { ZodPipe } from '../common/zod.pipe';
 import { AccessService } from './access.service';
-import { RequireAccess, RequireAccessGuard } from './require-access';
+import { PlatformSettingsService } from '../verification/platform-settings.service';
+import { mustEnableTwoFactor, RequireAccess, RequireAccessGuard } from './require-access';
 import { SessionUser } from './session-user.decorator';
 
 const levelSchema = z.object({ level: z.enum(ACCESS_LEVELS).nullable() });
 
 @Controller()
 class AccessController {
-  constructor(private readonly access: AccessService) {}
+  constructor(private readonly access: AccessService, private readonly settings: PlatformSettingsService) {}
 
   /** O que a pessoa logada pode fazer. A tela usa para mostrar ou esconder; quem barra é cada rota. */
   @Get('me/access')
-  mine(@SessionUser() actor: { id: string; role?: string | null }) { return this.access.resolve(actor); }
+  async mine(@SessionUser() actor: { id: string; role?: string | null; twoFactorEnabled?: boolean }) {
+    return { ...(await this.access.resolve(actor)), mustEnableTwoFactor: await mustEnableTwoFactor(this.settings, actor) };
+  }
 
   @Get('admin/access') @RequireAccess('admin.access', 'view')
   overview() { return this.access.overview(); }

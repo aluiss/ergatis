@@ -51,7 +51,8 @@ export default function PlatformRules() {
   const s = draft ?? q.data;
   const set = (patch: Partial<PlatformSettings>) => setDraft({ ...s, ...patch });
   const graceOn = !!s.graceForProfessionalsBefore && !!s.graceUntil;
-  const loosening = q.data.requireVerificationToPropose && !s.requireVerificationToPropose;
+  const loosening = (q.data.requireVerificationToPropose && !s.requireVerificationToPropose)
+    || (q.data.requireTwoFactorForStaff && !s.requireTwoFactorForStaff);
 
   return (
     <div className="max-w-2xl space-y-4">
@@ -71,6 +72,13 @@ export default function PlatformRules() {
         onChange={(v) => set({ requireFaceCheckPerProposal: v })}
         title="Confirmar o rosto a cada proposta"
         description="Antes de cada proposta, uma selfie rápida é comparada com o rosto cadastrado. Vale para quem já tem rosto aprovado."
+      />
+
+      <Toggle
+        id="require-2fa-staff" checked={s.requireTwoFactorForStaff} disabled={!editable}
+        onChange={(v) => set({ requireTwoFactorForStaff: v })}
+        title="Exigir login em duas etapas da equipe"
+        description="Quem tem papel de equipe só acessa a administração com o login em duas etapas ativo. A conta comum da pessoa não é afetada."
       />
 
       <section className="space-y-3 rounded-lg border p-4">
@@ -105,8 +113,11 @@ export default function PlatformRules() {
           <Button variant="ghost" className="h-11 sm:h-9" onClick={() => setDraft(null)}>Descartar</Button>
           {loosening ? (
             <ConfirmAction
-              title="Deixar profissionais sem verificação enviarem propostas?"
-              description="Qualquer pessoa com perfil profissional poderá enviar propostas e aparecer na busca, sem documento nem reconhecimento facial."
+              title="Afrouxar as regras de segurança?"
+              description={<ul className="list-disc space-y-1 pl-5">
+                {q.data.requireVerificationToPropose && !s.requireVerificationToPropose && <li>Qualquer pessoa com perfil profissional poderá enviar propostas e aparecer na busca, sem documento nem reconhecimento facial.</li>}
+                {q.data.requireTwoFactorForStaff && !s.requireTwoFactorForStaff && <li>A equipe poderá acessar a administração só com a senha. Se uma senha vazar, documentos e dados de todos ficam expostos.</li>}
+              </ul>}
               confirmLabel="Salvar mesmo assim" destructive onConfirm={() => save.mutateAsync(s)}
             >
               <Button className="h-11 sm:h-9">Salvar regras</Button>

@@ -1,7 +1,8 @@
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { APIError, createAuthMiddleware, getSessionFromCtx } from 'better-auth/api';
-import { admin } from 'better-auth/plugins';
+import { admin, twoFactor } from 'better-auth/plugins';
+import { BRAND } from './brand';
 import { eq } from 'drizzle-orm';
 import { LEGAL_VERSION } from '@ergatis/shared';
 import { maskEmail, recordAudit } from '../audit/audit';
@@ -10,6 +11,20 @@ import { env } from '../config/env';
 import { db } from '../db/client';
 import * as schema from '../db/schema';
 import { sendMail } from '../mail/mail';
+
+/**
+ * Este login ainda vai pedir o segundo fator? Usa a regra do próprio plugin (que considera
+ * aparelho confiável). Ela é interna ao Better Auth: se sumir numa atualização, a
+ * auditoria volta a registrar como login comum, sem quebrar nada.
+ */
+async function needsSecondFactor(ctx: unknown) {
+  const c = ctx as { context?: { options?: { plugins?: { id: string; shouldRequireTwoFactor?: (x: unknown) => Promise<boolean> }[] } } } | undefined;
+  const plugin = c?.context?.options?.plugins?.find((p) => p.id === 'two-factor');
+  if (!plugin?.shouldRequireTwoFactor) return false;
+  return plugin.shouldRequireTwoFactor(ctx).catch(() => false);
+}
+
+const TWO_FACTOR_VERIFY = new Set(['/two-factor/verify-totp', '/two-factor/verify-otp', '/two-factor/verify-backup-code']);
 
 type HeaderSource = { request?: Request; headers?: Headers } | null | undefined;
 
@@ -69,7 +84,21 @@ export const auth = betterAuth({
   },
   // Usado só por chamadas internas do servidor (seed). As rotas HTTP do plugin são bloqueadas
   // no hook abaixo: papéis, banimentos e afins passam pelas regras e pela auditoria do Ergatis.
-  plugins: [admin()],
+  plugins: [
+    admin(),
+    // Login em duas etapas: app autenticador (TOTP) como padrão; código por e-mail e códigos
+    // de recuperação como saída para quem está sem o celular. 5 tentativas por desafio.
+    twoFactor({
+      issuer: BRAND,
+      otpOptions: {
+        sendOTP: async ({ user, otp }) => {
+          await sendMail(user.email, `Seu código de acesso ao ${BRAND}`,
+            `Seu código é ${otp}. Ele vale por poucos minutos.\n\nSe não foi você tentando entrar, troque sua senha agora: alguém pode tê-la.`,
+            { userId: user.id });
+        },
+      },
+    }),
+  ],
   user: {
     additionalFields: {
       termsVersion: { type: 'string', required: true, input: true, returned: false },
@@ -113,6 +142,37 @@ export const auth = betterAuth({
       } else if (ctx.path === '/reset-password' && failed) {
         await recordAudit({ action: 'auth.password_reset_failed', targetType: 'user', metadata: { reason } });
       }
+
+      // Login em duas etapas.
+      const returned = ctx.context.returned as { user?: { id?: string } } | undefined;
+      const sessionUser = (ctx.context.session as { user?: { id: string; twoFactorEnabled?: boolean | null } } | null | undefined)?.user;
+      const who = sessionUser?.id ?? returned?.user?.id ?? null;
+      if (ctx.path === '/sign-in/email' && !failed) {
+        const id = await userIdByEmail(email);
+        const [u] = id ? await db.select({ on: schema.user.twoFactorEnabled }).from(schema.user).where(eq(schema.user.id, id)) : [];
+        if (u?.on) {
+          // Senha certa. Se o segundo fator nunca vier, a senha pode ter vazado.
+          const challenged = await needsSecondFactor(ctx);
+          await recordAudit({
+            actorId: id, action: challenged ? 'auth.two_factor_challenged' : 'auth.signed_in', targetType: 'user', targetId: id,
+            metadata: challenged ? base : { ...base, via: ctx.path, trustedDevice: true },
+          });
+        }
+      } else if (TWO_FACTOR_VERIFY.has(ctx.path)) {
+        const method = ctx.path.split('/').pop();
+        if (failed) {
+          await recordAudit({ actorId: sessionUser?.id ?? null, action: 'auth.two_factor_failed', targetType: 'user', targetId: sessionUser?.id ?? null, metadata: { method, reason } });
+        } else if (ctx.path === '/two-factor/verify-backup-code') {
+          await recordAudit({ actorId: who, action: 'auth.backup_code_used', targetType: 'user', targetId: who });
+        } else if (ctx.path === '/two-factor/verify-totp' && sessionUser && !sessionUser.twoFactorEnabled) {
+          // Logado e ainda sem 2FA: é a confirmação da ativação, não um login.
+          await recordAudit({ actorId: who, action: 'auth.two_factor_enabled', targetType: 'user', targetId: who });
+        }
+      } else if (ctx.path === '/two-factor/disable' && !failed && who) {
+        await recordAudit({ actorId: who, action: 'auth.two_factor_disabled', targetType: 'user', targetId: who });
+      } else if (ctx.path === '/two-factor/generate-backup-codes' && !failed && who) {
+        await recordAudit({ actorId: who, action: 'auth.backup_codes_regenerated', targetType: 'user', targetId: who });
+      }
     }),
   },
   databaseHooks: {
@@ -142,6 +202,12 @@ export const auth = betterAuth({
       create: {
         after: async (created, ctx) => {
           const s = created as { userId: string; impersonatedBy?: string | null };
+          // Com login em duas etapas, o plugin cria uma sessão provisória no login por senha e a
+          // troca pelo desafio do segundo fator. Quem registra esse caso é o hook `after` do login.
+          if (ctx?.path === '/sign-in/email' && !s.impersonatedBy) {
+            const [u] = await db.select({ on: schema.user.twoFactorEnabled }).from(schema.user).where(eq(schema.user.id, s.userId));
+            if (u?.on) return;
+          }
           await recordAudit({
             actorId: s.impersonatedBy ?? s.userId,
             action: s.impersonatedBy ? 'auth.impersonation_started' : 'auth.signed_in',

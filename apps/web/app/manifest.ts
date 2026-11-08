@@ -3,8 +3,9 @@ import { BRAND } from '@/lib/brand';
 
 /**
  * Torna o Ergatis instalável no celular (Android e Chrome pedem este arquivo; o
- * iPhone usa o "Adicionar à Tela de Início"). `standalone` abre sem a barra do
- * navegador, como um aplicativo, mantendo relógio e bateria à vista.
+ * iPhone usa o "Adicionar à Tela de Início"). `fullscreen` (decisão de produto) ocupa
+ * a tela toda, sem barra do navegador nem do sistema. Onde o aparelho não suporta
+ * (iPhone, alguns navegadores), cai para `standalone`: sem barra do navegador.
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
@@ -15,8 +16,8 @@ export default function manifest(): MetadataRoute.Manifest {
     lang: 'pt-BR',
     start_url: '/painel?origem=app',
     scope: '/',
-    display: 'standalone',
-    display_override: ['standalone', 'minimal-ui'],
+    display: 'fullscreen',
+    display_override: ['fullscreen', 'standalone', 'minimal-ui'],
     orientation: 'portrait',
     background_color: '#ffffff',
     theme_color: '#155dfc',

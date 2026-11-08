@@ -13,7 +13,7 @@ import { UserId } from '../common/user-id.decorator';
 import { ZodPipe } from '../common/zod.pipe';
 import type { Db } from '../db/client';
 import {
-  account, engagements, legalAcceptances, professionalCategories, professionals, profiles, proposalUsage, reviews, serviceRequests, session,
+  account, engagements, legalAcceptances, twoFactor, professionalCategories, professionals, profiles, proposalUsage, reviews, serviceRequests, session,
   subscriptions, user,
 } from '../db/schema';
 import { EntitlementsService } from '../entitlements/entitlements.service';
@@ -96,6 +96,9 @@ class AccountService {
       }).where(eq(user.id, userId));
       await tx.delete(session).where(eq(session.userId, userId));
       await tx.delete(account).where(eq(account.userId, userId));
+      // Segredo do app autenticador e códigos de recuperação não sobrevivem à conta.
+      await tx.delete(twoFactor).where(eq(twoFactor.userId, userId));
+      await tx.update(user).set({ twoFactorEnabled: false }).where(eq(user.id, userId));
       await recordAudit({ actorId: userId, action: 'account.deleted', targetType: 'user', targetId: userId }, tx);
     });
     // Biometria sai também do provedor, não só daqui.

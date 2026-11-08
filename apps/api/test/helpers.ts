@@ -38,8 +38,10 @@ export async function makeAdmin(actor: Actor) {
 }
 
 /** Papéis valem pela sessão: o próximo request já lê o papel novo do banco. */
-export async function setRole(actor: Actor, role: string) {
-  await db.update(user).set({ role }).where(eq(user.id, actor.id));
+export async function setRole(actor: Actor, role: string, { twoFactor = true } = {}) {
+  // Equipe precisa de login em duas etapas para usar o admin: os testes simulam que ativou.
+  // `twoFactor: false` para testar o bloqueio.
+  await db.update(user).set({ role, twoFactorEnabled: role !== 'user' && twoFactor }).where(eq(user.id, actor.id));
 }
 
 export const makeOwner = (actor: Actor) => setRole(actor, 'owner');

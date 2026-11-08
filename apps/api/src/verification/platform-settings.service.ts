@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
-import { platformSettingsSchema, type PlatformSettings } from '@ergatis/shared';
+import { PLATFORM_SETTINGS_FIELD_DEFAULTS, platformSettingsSchema, type PlatformSettings } from '@ergatis/shared';
 import { recordAudit } from '../audit/audit';
 import { diff } from '../audit/audit-policy';
 import { InjectDb } from '../common/db.module';
@@ -14,6 +14,7 @@ const SAFE_DEFAULT: PlatformSettings = {
   requireFaceCheckPerProposal: true,
   graceForProfessionalsBefore: null,
   graceUntil: null,
+  requireTwoFactorForStaff: true,
 };
 const CACHE_MS = 10_000;
 
@@ -26,7 +27,8 @@ export class PlatformSettingsService {
   async get(executor: DbOrTx = this.db): Promise<PlatformSettings> {
     if (this.cache && Date.now() - this.cache.at < CACHE_MS && executor === this.db) return this.cache.value;
     const [row] = await executor.select().from(platformSettings).where(eq(platformSettings.key, KEY));
-    const parsed = platformSettingsSchema.safeParse(row?.value);
+    // Campos novos ganham o padrão; o resto do que foi salvo (como a carência) é preservado.
+    const parsed = platformSettingsSchema.safeParse(row ? { ...PLATFORM_SETTINGS_FIELD_DEFAULTS, ...(row.value as object) } : undefined);
     const value = parsed.success ? parsed.data : SAFE_DEFAULT;
     if (executor === this.db) this.cache = { at: Date.now(), value };
     return value;

@@ -74,6 +74,9 @@ describe('papéis', () => {
 
     expect((await api(app, admin).post(`/admin/users/${target.id}/role`, { role: 'moderacao' })).status).toBe(403);
     expect((await api(app, owner).post(`/admin/users/${target.id}/role`, { role: 'moderacao' })).status).toBe(201);
+    // Promovida, mas sem login em duas etapas: a administração continua fechada até ativar.
+    expect((await api(app, target).get('/admin/verifications')).body.code).toBe('TWO_FACTOR_REQUIRED');
+    await setRole(target, 'moderacao');
     expect((await api(app, target).get('/admin/verifications')).status).toBe(200);
     expect((await api(app, owner).post(`/admin/users/${owner.id}/role`, { role: 'user' })).status).toBe(400);
     expect((await api(app, owner).post(`/admin/users/${target.id}/role`, { role: 'inventado' })).status).toBe(400);

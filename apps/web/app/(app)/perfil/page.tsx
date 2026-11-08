@@ -3,6 +3,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { ErrorState, Loading, useAction } from '@/components/app-ui';
 import { ConfirmAction } from '@/components/confirm-action';
+import { TwoFactorCard } from '@/components/two-factor-card';
+import { useAccess } from '@/components/access-provider';
 import { AvatarCard, PortfolioCard, VerificationCard } from '@/components/profile-files';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -21,6 +23,7 @@ interface Me {
 }
 
 export default function Profile() {
+  const { access } = useAccess();
   const me = useQuery({ queryKey: ['me'], queryFn: () => api<Me>('/me') });
   const categories = useQuery({ queryKey: ['categories'], queryFn: () => api<Category[]>('/categories') });
 
@@ -105,6 +108,8 @@ export default function Profile() {
 
       {pro && <PortfolioCard />}
       {pro && <VerificationCard />}
+
+      <TwoFactorCard recommended={!!access?.isStaff} required={!!access?.mustEnableTwoFactor} />
 
       <Card id="privacidade" className="scroll-mt-20">
         <CardHeader><CardTitle>Privacidade</CardTitle></CardHeader>

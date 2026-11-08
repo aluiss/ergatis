@@ -26,13 +26,13 @@ function detectPlatform(): Platform {
 }
 
 const subscribe = (onChange: () => void) => {
-  const standalone = matchMedia('(display-mode: standalone)');
+  const modes = ['fullscreen', 'standalone'].map((m) => matchMedia(`(display-mode: ${m})`));
   addEventListener(EVENT, onChange);
-  standalone.addEventListener('change', onChange);
-  return () => { removeEventListener(EVENT, onChange); standalone.removeEventListener('change', onChange); };
+  modes.forEach((m) => m.addEventListener('change', onChange));
+  return () => { removeEventListener(EVENT, onChange); modes.forEach((m) => m.removeEventListener('change', onChange)); };
 };
 
-const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true || !!window.__ergatisInstalled;
+const isStandalone = () => matchMedia('(display-mode: fullscreen)').matches || matchMedia('(display-mode: standalone)').matches || navigator.standalone === true || !!window.__ergatisInstalled;
 
 /** Estado da instalação. No servidor, tudo "desconhecido": a página decide depois de montar. */
 export function useInstall() {

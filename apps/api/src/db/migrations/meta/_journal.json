@@ -43,6 +43,13 @@
       "when": 1794154678351,
       "tag": "0005_bent_menace",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794158089318,
+      "tag": "0006_wakeful_wrecker",
+      "breakpoints": true
     }
   ]
 }

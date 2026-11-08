@@ -11,7 +11,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:seed": "tsx src/db/seed.ts",
-    "db:make-admin": "tsx src/db/make-admin.ts"
+    "db:make-admin": "tsx src/db/make-admin.ts",
+    "db:reset-2fa": "tsx src/db/reset-two-factor.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1163.0",

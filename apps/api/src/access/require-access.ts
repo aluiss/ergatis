@@ -4,8 +4,9 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
-import { ACCESS_RESOURCES, type AccessLevel, type AccessResource } from '@ergatis/shared';
+import { ACCESS_RESOURCES, isStaffRole, type AccessLevel, type AccessResource } from '@ergatis/shared';
 import { recordAudit } from '../audit/audit';
+import { PlatformSettingsService } from '../verification/platform-settings.service';
 import { AccessService } from './access.service';
 
 export const REQUIRE_ACCESS_KEY = 'ergatis:require-access';
@@ -24,11 +25,21 @@ export const RequireAccess = (resource: AccessResource, level: AccessLevel = 'vi
 export const RequireAccessBy = (resolver: AccessResolver) =>
   applyDecorators(SetMetadata(REQUIRE_ACCESS_KEY, resolver), UseGuards(RequireAccessGuard));
 
-type AuthedRequest = Request & { session?: { user?: { id: string; role?: string | null } } };
+type AuthedRequest = Request & { session?: { user?: { id: string; role?: string | null; twoFactorEnabled?: boolean | null } } };
+
+/** Da equipe, sem login em duas etapas, com a regra ligada. */
+export async function mustEnableTwoFactor(settings: PlatformSettingsService, actor: { role?: string | null; twoFactorEnabled?: boolean | null }) {
+  if (!isStaffRole(actor.role) || actor.twoFactorEnabled) return false;
+  return (await settings.get()).requireTwoFactorForStaff;
+}
 
 @Injectable()
 export class RequireAccessGuard implements CanActivate {
-  constructor(private readonly reflector: Reflector, private readonly access: AccessService) {}
+  constructor(
+    private readonly reflector: Reflector,
+    private readonly access: AccessService,
+    private readonly settings: PlatformSettingsService,
+  ) {}
 
   async canActivate(context: ExecutionContext) {
     const declared = this.reflector.getAllAndOverride<RequiredAccess | AccessResolver>(REQUIRE_ACCESS_KEY, [context.getHandler(), context.getClass()]);
@@ -38,6 +49,14 @@ export class RequireAccessGuard implements CanActivate {
     if (!required) throw new BadRequestException('Tipo de registro desconhecido');
     const actor = req.session?.user;
     if (!actor) throw new UnauthorizedException();
+    // Antes da permissão: conta da equipe sem segundo fator é o alvo mais valioso de quem rouba senhas.
+    if (await mustEnableTwoFactor(this.settings, actor)) {
+      await recordAudit({
+        actorId: actor.id, action: 'access.denied', targetType: 'route', targetId: null,
+        summary: 'Equipe sem login em duas etapas', metadata: { resource: required.resource, reason: 'two_factor_required' },
+      });
+      throw new ForbiddenException({ code: 'TWO_FACTOR_REQUIRED', message: 'Ative o login em duas etapas no seu perfil para acessar a administração.' });
+    }
     if (await this.access.can(actor, required.resource, required.level)) return true;
 
     // Tentativa negada é sinal de segurança: alguém procurando o que não pode.

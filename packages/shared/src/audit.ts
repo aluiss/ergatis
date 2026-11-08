@@ -33,6 +33,13 @@ export const AUDIT_ACTIONS = {
   'auth.password_reset': { label: 'Senha redefinida', group: 'access', tone: 'change' },
   'auth.password_reset_failed': { label: 'Redefinição de senha recusada', group: 'access', tone: 'warning' },
   'auth.impersonation_started': { label: 'Acesso como outro usuário', group: 'access', tone: 'danger' },
+  'auth.two_factor_challenged': { label: 'Senha certa, aguardando o segundo fator', group: 'access', tone: 'neutral' },
+  'auth.two_factor_failed': { label: 'Código do segundo fator recusado', group: 'access', tone: 'warning' },
+  'auth.two_factor_enabled': { label: 'Login em duas etapas ativado', group: 'access', tone: 'positive' },
+  'auth.two_factor_disabled': { label: 'Login em duas etapas desativado', group: 'access', tone: 'danger' },
+  'auth.two_factor_reset': { label: 'Login em duas etapas redefinido pela equipe', group: 'access', tone: 'danger' },
+  'auth.backup_code_used': { label: 'Entrou com código de recuperação', group: 'access', tone: 'warning' },
+  'auth.backup_codes_regenerated': { label: 'Novos códigos de recuperação', group: 'access', tone: 'change' },
   // Contas e papéis
   'user.created': { label: 'Conta criada', group: 'accounts', tone: 'positive' },
   'user.banned': { label: 'Usuário banido', group: 'accounts', tone: 'danger' },

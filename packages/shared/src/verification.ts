@@ -39,7 +39,11 @@ export const platformSettingsSchema = z.object({
   graceForProfessionalsBefore: z.iso.datetime().nullable(),
   /** ...podem propor sem verificação até esta data. */
   graceUntil: z.iso.datetime().nullable(),
+  /** Equipe só acessa a administração com login em duas etapas ativo. */
+  requireTwoFactorForStaff: z.boolean(),
 });
+/** Padrões dos campos criados depois da primeira gravação das regras. */
+export const PLATFORM_SETTINGS_FIELD_DEFAULTS: Partial<PlatformSettings> = { requireTwoFactorForStaff: true };
 export type PlatformSettings = z.infer<typeof platformSettingsSchema>;
 export const updatePlatformSettingsSchema = platformSettingsSchema.partial();
 
