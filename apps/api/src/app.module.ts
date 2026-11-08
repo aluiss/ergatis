@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AuthModule } from '@thallesp/nestjs-better-auth';
+import { AccessModule } from './access/access.module';
 import { AccountModule } from './account/account.module';
 import { AdminModule } from './admin/admin.module';
 import { AuditRetentionService } from './audit/audit-retention.service';
@@ -21,15 +22,18 @@ import { ProfessionalsModule } from './professionals/professionals.module';
 import { ProposalsModule } from './proposals/proposals.module';
 import { ReportsModule } from './reports/reports.module';
 import { RequestsModule } from './requests/requests.module';
+import { VerificationModule } from './verification/verification.module';
 
 @Module({
   imports: [
     AuthModule.forRoot({ auth }),
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120, skipIf: () => env.NODE_ENV === 'test' }]),
     DbModule,
+    AccessModule,
     EntitlementsModule,
     NotificationsModule,
     FilesModule,
+    VerificationModule,
     HealthModule,
     CategoriesModule,
     AccountModule,

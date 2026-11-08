@@ -1,3 +1,4 @@
+import { VerificationService } from '../verification/verification.service';
 import {
   Body, ConflictException, Controller, Delete, Get, Injectable, Module, Patch,
 } from '@nestjs/common';
@@ -25,6 +26,7 @@ class AccountService {
     @InjectDb() private readonly db: Db,
     private readonly entitlements: EntitlementsService,
     private readonly files: FilesService,
+    private readonly verification: VerificationService,
   ) {}
 
   async me(userId: string) {
@@ -96,6 +98,8 @@ class AccountService {
       await tx.delete(account).where(eq(account.userId, userId));
       await recordAudit({ actorId: userId, action: 'account.deleted', targetType: 'user', targetId: userId }, tx);
     });
+    // Biometria sai também do provedor, não só daqui.
+    await this.verification.forget(userId);
     await this.files.removeAll(userId);
     return { ok: true };
   }

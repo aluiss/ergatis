@@ -1,5 +1,5 @@
 import type { INestApplication } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
+import { eq, isNull } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../src/db/client';
 import { notifications } from '../src/db/schema';
@@ -19,7 +19,12 @@ let app: INestApplication;
 let mailer: NotificationMailer;
 beforeAll(async () => { app = await createApp(); mailer = app.get(NotificationMailer); });
 afterAll(async () => { await app.close(); });
-beforeEach(async () => { await mailer.runOnce(); mail.sent.length = 0; mail.fail = 0; });
+// O banco é compartilhado entre os arquivos de teste: notificações antigas de outros testes
+// não podem disputar a rodada (a fila pega 20 por vez). Começa cada teste com a fila vazia.
+beforeEach(async () => {
+  await db.update(notifications).set({ emailClaimedAt: new Date() }).where(isNull(notifications.emailClaimedAt));
+  mail.sent.length = 0; mail.fail = 0;
+});
 
 describe('fila de e-mails', () => {
   it('avisa o cliente sobre nova proposta, com link absoluto', async () => {

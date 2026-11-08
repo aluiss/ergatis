@@ -40,6 +40,8 @@ export type CreateRequestInput = z.infer<typeof createRequestSchema>;
 export const createProposalSchema = z.object({
   amountCents: money,
   message: z.string().trim().min(5).max(1000),
+  /** Checagem facial aprovada há pouco, quando a plataforma exige uma por proposta. */
+  faceCheckId: z.uuid().optional(),
 });
 export type CreateProposalInput = z.infer<typeof createProposalSchema>;
 

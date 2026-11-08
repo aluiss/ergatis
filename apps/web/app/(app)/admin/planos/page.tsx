@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { api } from '@/lib/api';
+import { useAccess } from '@/components/access-provider';
 
 interface Plan { code: string; name: string; priceCents: number; entitlements: Entitlements }
 const FLAGS = [
@@ -16,6 +17,7 @@ const FLAGS = [
 ] as const;
 
 function PlanForm({ plan }: { plan: Plan }) {
+  const editable = useAccess().can('admin.plans', 'edit');
   const save = useAction((f: FormData) => {
     const limit = String(f.get('limit')).trim();
     return api(`/admin/plans/${plan.code}`, { method: 'PATCH', body: {
@@ -33,13 +35,16 @@ function PlanForm({ plan }: { plan: Plan }) {
       <CardHeader><CardTitle className="capitalize">{plan.code}</CardTitle></CardHeader>
       <CardContent>
         <form action={(f) => save.mutate(f)} className="space-y-3">
+          {/* Só ver: o mesmo formulário, travado, para não haver duas telas. */}
+          <fieldset disabled={!editable} className="space-y-3">
           <div className="space-y-1"><Label htmlFor={`n-${plan.code}`}>Nome</Label><Input id={`n-${plan.code}`} name="name" defaultValue={plan.name} required /></div>
           <div className="space-y-1"><Label htmlFor={`p-${plan.code}`}>Preço mensal em R$</Label><Input id={`p-${plan.code}`} name="price" inputMode="decimal" defaultValue={(plan.priceCents / 100).toFixed(2)} required /></div>
           <div className="space-y-1"><Label htmlFor={`l-${plan.code}`}>Propostas por mês (vazio = sem limite)</Label><Input id={`l-${plan.code}`} name="limit" type="number" min={0} defaultValue={plan.entitlements.monthlyProposalLimit ?? ''} /></div>
           {FLAGS.map(([key, label]) => (
             <label key={key} className="flex items-center gap-2 text-sm"><input type="checkbox" name={key} defaultChecked={plan.entitlements[key]} /> {label}</label>
           ))}
-          <Button loading={save.isPending}>Salvar</Button>
+          </fieldset>
+          {editable && <Button loading={save.isPending}>Salvar</Button>}
         </form>
       </CardContent>
     </Card>

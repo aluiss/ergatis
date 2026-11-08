@@ -1,3 +1,5 @@
+import { PlatformSettingsService } from '../verification/platform-settings.service';
+import { VerificationService } from '../verification/verification.service';
 import { annotateAudit } from '../audit/audit-context';
 import { diff } from '../audit/audit-policy';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
@@ -15,6 +17,8 @@ export class ProfessionalsService {
   constructor(
     @InjectDb() private readonly db: Db,
     private readonly entitlements: EntitlementsService,
+    private readonly verification: VerificationService,
+    private readonly settings: PlatformSettingsService,
   ) {}
 
   async setup(userId: string, input: ProfessionalSetupInput) {
@@ -49,6 +53,9 @@ export class ProfessionalsService {
     const [document] = await this.db.select({ id: files.id }).from(files)
       .where(and(eq(files.ownerId, userId), eq(files.kind, 'verification_document')));
     if (!document) throw new BadRequestException('Envie um documento antes de solicitar a verificação');
+    const status = await this.verification.status(userId);
+    if (!status.consent || status.consentOutdated) throw new BadRequestException('Aceite o uso da biometria antes de solicitar a verificação');
+    if (status.face?.status !== 'captured') throw new BadRequestException('Faça o reconhecimento facial antes de solicitar a verificação');
     await this.db.update(professionals).set({ verification: 'pending' }).where(eq(professionals.userId, userId));
     return { verification: 'pending' as const };
   }
@@ -121,6 +128,14 @@ export class ProfessionalsService {
       : sql<null>`null`;
 
     const filters: (SQL | undefined)[] = [eq(professionals.active, true)];
+    // Com a verificação obrigatória, só aparece quem foi verificado (ou ainda está na carência).
+    const rules = await this.settings.get();
+    if (rules.requireVerificationToPropose) {
+      const grace = rules.graceForProfessionalsBefore && rules.graceUntil && new Date() < new Date(rules.graceUntil)
+        ? sql` or ${professionals.createdAt} < ${new Date(rules.graceForProfessionalsBefore)}` : sql``;
+      filters.push(sql`((${professionals.verification} = 'approved' and exists (select 1 from face_enrollments fe
+        where fe.user_id = ${professionals.userId} and fe.status = 'approved'))${grace})`);
+    }
     if (input.categoryId) {
       filters.push(sql`exists (select 1 from professional_categories pc
         where pc.professional_id = ${professionals.userId} and pc.category_id = ${input.categoryId})`);

@@ -2,15 +2,18 @@ import {
   BadRequestException, Body, Controller, Delete, Get, Header, Injectable, Module, NotFoundException,
   Param, ParseUUIDPipe, Patch, Post, Query,
 } from '@nestjs/common';
-import { Roles } from '@thallesp/nestjs-better-auth';
 import { and, count, desc, eq, gte, ilike, inArray, isNull, like, lte, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
 import {
-  grantSchema, PLAN_CODES, REPORT_STATUSES, AUDIT_ACTIONS, AUDIT_GROUPS, auditActionLabel, type AuditActionKey, type AuditGroup, type AuditChange, type GrantInput,
+  grantSchema, PLAN_CODES, REPORT_STATUSES, AUDIT_ACTIONS, AUDIT_GROUPS, USER_ROLES, auditActionLabel, type AuditActionKey, type AuditGroup, type AuditChange, type GrantInput,
 } from '@ergatis/shared';
 import { InjectDb } from '../common/db.module';
+import { AccessService } from '../access/access.service';
+import { RequireAccess } from '../access/require-access';
+import { SessionUser } from '../access/session-user.decorator';
 import { recordAudit } from '../audit/audit';
+import { VerificationService } from '../verification/verification.service';
 import { diff } from '../audit/audit-policy';
 import { SkipAudit } from '../audit/audit.interceptor';
 import { UserId } from '../common/user-id.decorator';
@@ -57,7 +60,7 @@ const csvCell = (v: unknown) => {
   return `"${(/^[=+\-@]/.test(text) ? `'${text}` : text).replace(/"/g, '""')}"`;
 };
 const banSchema = z.object({ reason: z.string().trim().min(3).max(500) });
-const roleSchema = z.object({ role: z.enum(['user', 'admin']) });
+const roleSchema = z.object({ role: z.enum(USER_ROLES) });
 const planSchema = z.object({
   name: z.string().trim().min(2).max(60).optional(),
   priceCents: z.number().int().min(0).optional(),
@@ -85,6 +88,7 @@ class AdminService {
     private readonly entitlements: EntitlementsService,
     private readonly notifications: NotificationsService,
     private readonly files: FilesService,
+    private readonly verification: VerificationService,
   ) {}
 
   /** Grava na mesma transação da ação: ou as duas acontecem, ou nenhuma. */
@@ -156,20 +160,6 @@ class AdminService {
 
   ban(actorId: string, id: string, reason: string) { return this.setBan(actorId, id, true, reason); }
   unban(actorId: string, id: string) { return this.setBan(actorId, id, false, null); }
-
-  async setRole(actorId: string, id: string, role: 'user' | 'admin') {
-    if (id === actorId) throw new BadRequestException('Você não pode alterar a própria conta');
-    return this.db.transaction(async (tx) => {
-      const [before] = await tx.select({ role: user.role }).from(user).where(eq(user.id, id));
-      const [updated] = await tx.update(user).set({ role }).where(eq(user.id, id)).returning({ id: user.id });
-      if (!updated) throw new NotFoundException('Usuário não encontrado');
-      await this.audit(tx, actorId, 'user.role_changed', 'user', id, {
-        changes: diff(before, { role }),
-        summary: `Papel alterado de ${before?.role ?? 'user'} para ${role}`,
-      });
-      return { ok: true };
-    });
-  }
 
   async grant(actorId: string, input: GrantInput) {
     return this.db.transaction(async (tx) => {
@@ -251,7 +241,8 @@ class AdminService {
     const documents = pending.length === 0 ? [] : await this.db
       .select({ id: files.id, ownerId: files.ownerId, mimeType: files.mimeType }).from(files)
       .where(and(eq(files.kind, 'verification_document'), inArray(files.ownerId, pending.map((p) => p.userId))));
-    return pending.map((p) => ({ ...p, documents: documents.filter((d) => d.ownerId === p.userId) }));
+    const face = await this.verification.reviewData(pending.map((p) => p.userId));
+    return pending.map((p) => ({ ...p, documents: documents.filter((d) => d.ownerId === p.userId), face: face.get(p.userId) ?? null }));
   }
 
   async decideVerification(actorId: string, id: string, approved: boolean) {
@@ -259,12 +250,15 @@ class AdminService {
       const [updated] = await tx.update(professionals).set({ verification: approved ? 'approved' : 'rejected' })
         .where(and(eq(professionals.userId, id), eq(professionals.verification, 'pending'))).returning({ id: professionals.userId });
       if (!updated) throw new NotFoundException('Solicitação não encontrada');
+      // Documento e rosto são decididos juntos: aprovar sem rosto cadastrado não vale.
+      await this.verification.onDecision(tx, id, approved);
       await this.audit(tx, actorId, approved ? 'verification.approved' : 'verification.rejected', 'user', id);
       await this.notifications.notify(tx, id, 'verification_decided', approved ? 'Seu perfil foi verificado.' : 'Sua verificação foi recusada.');
       return { ok: true };
     });
-    // Decidido o pedido, não há motivo para manter documento de identidade.
+    // Decidido o pedido, não há motivo para manter documento nem selfie: fica só o resultado.
     await this.files.removeAll(id, 'verification_document');
+    await this.files.removeAll(id, 'verification_selfie');
     return result;
   }
 
@@ -333,66 +327,65 @@ class AdminService {
   }
 }
 
-@Roles(['admin'])
 @SkipAudit('o serviço registra cada ação de admin na mesma transação')
 @Controller('admin')
 class AdminController {
-  constructor(private readonly service: AdminService) {}
+  constructor(private readonly service: AdminService, private readonly access: AccessService) {}
 
-  @Get('metrics') metrics() { return this.service.metrics(); }
-  @Get('users') users(@Query(new ZodPipe(listSchema)) q: z.infer<typeof listSchema>) { return this.service.users(q); }
-  @Get('users/:id') user(@Param('id', ParseUUIDPipe) id: string) { return this.service.userDetail(id); }
+  @Get('metrics') @RequireAccess('admin.overview') metrics() { return this.service.metrics(); }
+  @Get('users') @RequireAccess('admin.users') users(@Query(new ZodPipe(listSchema)) q: z.infer<typeof listSchema>) { return this.service.users(q); }
+  @Get('users/:id') @RequireAccess('admin.users') user(@Param('id', ParseUUIDPipe) id: string) { return this.service.userDetail(id); }
 
-  @Post('users/:id/ban')
+  @Post('users/:id/ban') @RequireAccess('admin.users', 'edit')
   ban(@UserId() a: string, @Param('id', ParseUUIDPipe) id: string, @Body(new ZodPipe(banSchema)) b: z.infer<typeof banSchema>) {
     return this.service.ban(a, id, b.reason);
   }
 
-  @Post('users/:id/unban')
+  @Post('users/:id/unban') @RequireAccess('admin.users', 'edit')
   unban(@UserId() a: string, @Param('id', ParseUUIDPipe) id: string) { return this.service.unban(a, id); }
 
-  @Post('users/:id/role')
-  role(@UserId() a: string, @Param('id', ParseUUIDPipe) id: string, @Body(new ZodPipe(roleSchema)) b: z.infer<typeof roleSchema>) {
-    return this.service.setRole(a, id, b.role);
+  @Post('users/:id/role') @RequireAccess('admin.access', 'edit')
+  role(@SessionUser() actor: { id: string; role: string | null }, @Param('id', ParseUUIDPipe) id: string, @Body(new ZodPipe(roleSchema)) b: z.infer<typeof roleSchema>) {
+    return this.access.setRole(actor, id, b.role);
   }
 
-  @Post('grants')
+  @Post('grants') @RequireAccess('grants.manage', 'edit')
   grant(@UserId() a: string, @Body(new ZodPipe(grantSchema)) b: GrantInput) { return this.service.grant(a, b); }
 
-  @Delete('grants/:id')
+  @Delete('grants/:id') @RequireAccess('grants.manage', 'edit')
   revoke(@UserId() a: string, @Param('id', ParseUUIDPipe) id: string) { return this.service.revokeGrant(a, id); }
 
-  @Get('plans') plans() { return this.service.plans(); }
+  @Get('plans') @RequireAccess('admin.plans') plans() { return this.service.plans(); }
 
-  @Patch('plans/:code')
+  @Patch('plans/:code') @RequireAccess('admin.plans', 'edit')
   updatePlan(
     @UserId() a: string,
     @Param('code', new ZodPipe(z.enum(PLAN_CODES))) code: (typeof PLAN_CODES)[number],
     @Body(new ZodPipe(planSchema)) b: z.infer<typeof planSchema>,
   ) { return this.service.updatePlan(a, code, b); }
 
-  @Get('subscriptions')
+  @Get('subscriptions') @RequireAccess('admin.subscriptions')
   subscriptions(@Query(new ZodPipe(listSchema)) q: z.infer<typeof listSchema>) { return this.service.subscriptions(q.page); }
 
-  @Get('reports')
+  @Get('reports') @RequireAccess('admin.reports')
   reports(@Query(new ZodPipe(listSchema)) q: z.infer<typeof listSchema>) { return this.service.reports(q.page); }
 
-  @Patch('reports/:id')
+  @Patch('reports/:id') @RequireAccess('admin.reports', 'edit')
   resolve(@UserId() a: string, @Param('id', ParseUUIDPipe) id: string, @Body(new ZodPipe(reportSchema)) b: z.infer<typeof reportSchema>) {
     return this.service.resolveReport(a, id, b);
   }
 
-  @Get('verifications') verifications() { return this.service.pendingVerifications(); }
+  @Get('verifications') @RequireAccess('admin.verifications') verifications() { return this.service.pendingVerifications(); }
 
-  @Post('verifications/:id')
+  @Post('verifications/:id') @RequireAccess('admin.verifications', 'edit')
   decide(@UserId() a: string, @Param('id', ParseUUIDPipe) id: string, @Body(new ZodPipe(verificationSchema)) b: z.infer<typeof verificationSchema>) {
     return this.service.decideVerification(a, id, b.approved);
   }
 
-  @Get('audit-logs')
+  @Get('audit-logs') @RequireAccess('admin.audit')
   audit(@Query(new ZodPipe(auditListSchema)) q: z.infer<typeof auditListSchema>) { return this.service.auditLogs(q); }
 
-  @Get('audit-logs/export')
+  @Get('audit-logs/export') @RequireAccess('audit.export', 'edit')
   @Header('Content-Type', 'text/csv; charset=utf-8')
   @Header('Content-Disposition', 'attachment; filename="auditoria.csv"')
   @Header('Cache-Control', 'no-store')

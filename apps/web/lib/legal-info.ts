@@ -9,6 +9,7 @@ export const LEGAL_INFO = {
   contactEmail: null as string | null,
   dpoName: null as string | null, // encarregado de dados (LGPD)
   infrastructure: null as string | null, // provedores de hospedagem e e-mail
+  faceProvider: null as string | null, // provedor de reconhecimento facial (quando contratado)
 };
 
 export const isLegalInfoComplete = Object.values(LEGAL_INFO).every(Boolean);

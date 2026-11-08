@@ -37,7 +37,10 @@ export const user = pgTable('user', {
   termsVersion: text(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
-});
+}, (t) => [
+  // Papéis válidos também no banco: o plugin do Better Auth ou um UPDATE manual não criam um papel inventado.
+  check('user_role_check', sql`${t.role} is null or ${t.role} in ('user', 'owner', 'admin', 'moderacao', 'suporte', 'financeiro', 'juridico')`),
+]);
 
 export const session = pgTable('session', {
   id: id(),
@@ -346,4 +349,83 @@ export const auditLogs = pgTable('audit_logs', {
   index('audit_action_idx').on(t.action, t.createdAt),
   index('audit_created_idx').on(t.createdAt),
   index('audit_request_idx').on(t.requestId),
+]);
+
+/**
+ * Permissões da equipe: por papel (`role`) ou por pessoa (`userId`), nunca as duas.
+ * Só concessões positivas; `edit` implica `view`. O catálogo de recursos está em
+ * @ergatis/shared (access.ts). `grantedBy` nulo = pacote inicial do sistema.
+ */
+export const accessGrants = pgTable('access_grants', {
+  id: id(),
+  resourceKey: varchar({ length: 60 }).notNull(),
+  level: varchar({ length: 10 }).notNull(),
+  role: varchar({ length: 20 }),
+  userId: uuid().references(() => user.id, { onDelete: 'cascade' }),
+  grantedBy: uuid().references(() => user.id, { onDelete: 'set null' }),
+  createdAt: createdAt(),
+}, (t) => [
+  uniqueIndex('access_grants_role_uq').on(t.resourceKey, t.role).where(sql`${t.role} is not null`),
+  uniqueIndex('access_grants_user_uq').on(t.resourceKey, t.userId).where(sql`${t.userId} is not null`),
+  index('access_grants_user_idx').on(t.userId),
+  check('access_grants_subject_check', sql`(${t.role} is null) <> (${t.userId} is null)`),
+  check('access_grants_level_check', sql`${t.level} in ('view', 'edit')`),
+  check('access_grants_role_check', sql`${t.role} is null or ${t.role} in ('admin', 'moderacao', 'suporte', 'financeiro', 'juridico')`),
+]);
+
+/** Regras ajustáveis pelo admin (chave -> valor). Ver `platformSettingsSchema` em @ergatis/shared. */
+export const platformSettings = pgTable('platform_settings', {
+  key: varchar({ length: 60 }).primaryKey(),
+  value: jsonb().notNull(),
+  updatedBy: uuid().references(() => user.id, { onDelete: 'set null' }),
+  updatedAt: updatedAt(),
+});
+
+/**
+ * Cadastro facial do profissional. Guarda o consentimento e a referência do rosto
+ * no provedor (`subjectRef`); a imagem e o modelo biométrico ficam com o provedor,
+ * nunca aqui. Retirar o consentimento apaga a linha e o rosto no provedor.
+ */
+export const faceEnrollments = pgTable('face_enrollments', {
+  userId: uuid().primaryKey().references(() => user.id, { onDelete: 'cascade' }),
+  consentVersion: varchar({ length: 20 }).notNull(),
+  consentAt: timestamp(tz).notNull(),
+  provider: varchar({ length: 30 }),
+  subjectRef: varchar({ length: 200 }),
+  status: varchar({ length: 20 }),
+  livenessScore: doublePrecision(),
+  /** Semelhança com a foto do documento, quando o provedor compara (apoio à moderação). */
+  documentMatchScore: doublePrecision(),
+  capturedAt: timestamp(tz),
+  decidedAt: timestamp(tz),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  check('face_enrollments_status_check', sql`${t.status} is null or ${t.status} in ('captured', 'approved', 'rejected')`),
+]);
+
+/**
+ * Cada checagem facial. Para proposta: vale por pouco tempo, uma vez só, e para o
+ * pedido em que foi feita (`requestId`). Sem imagem: só o resultado.
+ */
+export const faceChecks = pgTable('face_checks', {
+  id: id(),
+  userId: uuid().notNull().references(() => user.id, { onDelete: 'cascade' }),
+  purpose: varchar({ length: 20 }).notNull(),
+  provider: varchar({ length: 30 }).notNull(),
+  sessionRef: varchar({ length: 200 }).notNull(),
+  status: varchar({ length: 20 }).notNull().default('pending'),
+  livenessScore: doublePrecision(),
+  matchScore: doublePrecision(),
+  failureReason: varchar({ length: 200 }),
+  requestId: uuid().references(() => serviceRequests.id, { onDelete: 'set null' }),
+  proposalId: uuid().references(() => proposals.id, { onDelete: 'set null' }),
+  expiresAt: timestamp(tz).notNull(),
+  completedAt: timestamp(tz),
+  usedAt: timestamp(tz),
+  createdAt: createdAt(),
+}, (t) => [
+  index('face_checks_user_idx').on(t.userId, t.createdAt),
+  check('face_checks_purpose_check', sql`${t.purpose} in ('enrollment', 'proposal')`),
+  check('face_checks_status_check', sql`${t.status} in ('pending', 'passed', 'failed', 'expired')`),
 ]);

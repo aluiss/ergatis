@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import { BASIC_ENTITLEMENTS, LEGAL_VERSION, type Entitlements, type PlanCode } from '@ergatis/shared';
+import { BASIC_ENTITLEMENTS, isStaffRole, LEGAL_VERSION, type Entitlements, type PlanCode } from '@ergatis/shared';
 import { auth } from '../auth/auth';
 import { env } from '../config/env';
 import { db, pool } from './client';
@@ -43,17 +43,21 @@ async function seedUser() {
         email,
         password: env.SEED_PASSWORD,
         name: env.SEED_NAME ?? email.split('@')[0],
-        role: env.SEED_ROLE,
+        role: 'user', // o papel definitivo vem no update abaixo (o tipo do plugin só conhece user/admin)
         data: { termsVersion: LEGAL_VERSION },
       },
     });
     id = created.user.id;
   }
-  await db.update(user).set({ role: env.SEED_ROLE, emailVerified: true }).where(eq(user.id, id));
-  if (env.SEED_ROLE === 'admin' && existing?.role !== 'admin') {
-    await recordAudit({ action: 'user.made_admin_seed', targetType: 'user', targetId: id, changes: [{ field: 'role', from: existing?.role ?? null, to: 'admin' }] });
+  // Em conta existente, só promove quem ainda é usuário comum: papéis de equipe ajustados
+  // pela tela (ou o proprietário definido na migração) nunca são rebaixados pelo seed.
+  const keepRole = existing && existing.role && existing.role !== 'user';
+  const role = keepRole ? existing.role! : env.SEED_ROLE;
+  await db.update(user).set({ role, emailVerified: true }).where(eq(user.id, id));
+  if (isStaffRole(env.SEED_ROLE) && !keepRole) {
+    await recordAudit({ action: 'user.made_admin_seed', targetType: 'user', targetId: id, changes: [{ field: 'role', from: existing?.role ?? null, to: env.SEED_ROLE }] });
   }
-  console.log(`Usuário ${existing ? 'atualizado' : 'criado'}: ${email} (${env.SEED_ROLE}).`);
+  console.log(`Usuário ${existing ? 'atualizado' : 'criado'}: ${email} (${role}${keepRole && role !== env.SEED_ROLE ? `; papel atual mantido, SEED_ROLE=${env.SEED_ROLE} ignorado` : ''}).`);
 }
 
 /** Idempotente e não destrutivo: pode rodar em qualquer ambiente. */

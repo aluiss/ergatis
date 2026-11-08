@@ -110,7 +110,7 @@ export function AppShell({ user, ctx, children }: { user: ShellUser; ctx: NavCon
                     <span className="text-muted-foreground block truncate text-xs font-normal">{user.email}</span>
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
-                  {[ITEMS.perfil, ITEMS.planos, ITEMS.configuracoes, ...(ctx.isProfessional ? [] : [ITEMS.oferecer]), ...(ctx.isAdmin ? [ITEMS.admin] : [])].map((item) => (
+                  {[ITEMS.perfil, ITEMS.planos, ITEMS.configuracoes, ...(ctx.isProfessional ? [] : [ITEMS.oferecer]), ...(ctx.isStaff ? [ITEMS.admin] : [])].map((item) => (
                     <DropdownMenuItem key={item.id} asChild>
                       <Link href={item.href}><item.icon /> {item.label}</Link>
                     </DropdownMenuItem>

@@ -29,6 +29,20 @@
       "when": 1794102108301,
       "tag": "0003_high_tarot",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794153975884,
+      "tag": "0004_steady_snowbird",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794154678351,
+      "tag": "0005_bent_menace",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next';
+import Script from 'next/script';
 import { Providers } from '@/components/providers';
 import { BRAND } from '@/lib/brand';
 import { installScript } from '@/lib/install-script';
@@ -26,11 +27,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     // O script do tema muda a classe do <html> antes da hidratação, de propósito.
     <html lang="pt-BR" suppressHydrationWarning>
-      <head>
-        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
-        <script dangerouslySetInnerHTML={{ __html: installScript }} />
-      </head>
       <body className="min-h-screen antialiased">
+        {/* beforeInteractive: vão no HTML inicial e rodam antes da hidratação (tema sem piscar,
+            evento de instalação guardado). Um <script> cru aqui faria o React 19 reclamar. */}
+        <Script id="ergatis-theme" strategy="beforeInteractive" dangerouslySetInnerHTML={{ __html: themeScript }} />
+        <Script id="ergatis-install" strategy="beforeInteractive" dangerouslySetInnerHTML={{ __html: installScript }} />
         <Providers>{children}</Providers>
       </body>
     </html>

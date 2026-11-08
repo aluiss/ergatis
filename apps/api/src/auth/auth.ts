@@ -67,6 +67,8 @@ export const auth = betterAuth({
       });
     },
   },
+  // Usado só por chamadas internas do servidor (seed). As rotas HTTP do plugin são bloqueadas
+  // no hook abaixo: papéis, banimentos e afins passam pelas regras e pela auditoria do Ergatis.
   plugins: [admin()],
   user: {
     additionalFields: {
@@ -75,6 +77,12 @@ export const auth = betterAuth({
   },
   hooks: {
     before: createAuthMiddleware(async (ctx) => {
+      // As rotas do plugin admin (/admin/set-role, /admin/ban-user, /admin/impersonate-user...)
+      // contornariam as travas e a auditoria do Ergatis. Chamadas internas do servidor
+      // (sem requisição, como o seed) continuam funcionando.
+      if (ctx.path.startsWith('/admin/') && ctx.request) {
+        throw new APIError('FORBIDDEN', { message: 'Use o painel de administração do Ergatis.' });
+      }
       // Depois do sign-out a sessão já não existe; o autor é lido antes.
       if (ctx.path !== '/sign-out') return;
       const current = await getSessionFromCtx(ctx).catch(() => null);

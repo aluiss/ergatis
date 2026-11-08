@@ -1,9 +1,12 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { Crown, Lock, Star } from 'lucide-react';
+import { Crown, Lock, ScanFace, ShieldAlert, Star } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
+import { useRef, useState } from 'react';
+import type { VerificationStatusView } from '@ergatis/shared';
+import { FaceCheckDialog } from '@/components/face-check';
 import { ErrorState, Loading, pendingFor, post, StatusBadge, useAction } from '@/components/app-ui';
 import { ConfirmAction } from '@/components/confirm-action';
 import { Button } from '@/components/ui/button';
@@ -35,15 +38,29 @@ export default function RequestDetail() {
   const accept = useAction((pid: string) => post(`/proposals/${pid}/accept`), { ...keys, success: 'Profissional contratado.', onDone: () => router.push('/contratacoes') });
   const reject = useAction((pid: string) => post(`/proposals/${pid}/reject`), keys);
   const cancel = useAction(() => post(`/requests/${id}/cancel`), { ...keys, success: 'Pedido cancelado.' });
-  const propose = useAction(async (form: FormData) => {
+  const verification = useQuery({
+    queryKey: ['verification'], queryFn: () => api<VerificationStatusView>('/verification/me'),
+    enabled: q.data !== undefined && q.data.proposals === undefined,
+  });
+  const pending = useRef<FormData | null>(null);
+  const [faceOpen, setFaceOpen] = useState(false);
+  const propose = useAction(async ({ form, faceCheckId }: { form: FormData; faceCheckId?: string }) => {
     const amount = Number(String(form.get('amount')).replace(',', '.'));
     try {
-      await post(`/requests/${id}/proposals`, { amountCents: Math.round(amount * 100), message: form.get('message') });
+      await post(`/requests/${id}/proposals`, { amountCents: Math.round(amount * 100), message: form.get('message'), faceCheckId });
     } catch (error) {
       if (error instanceof ApiError && error.code === 'PROPOSAL_LIMIT_REACHED') router.push('/planos');
+      // A checagem venceu ou não valia: pede outra na hora, sem perder o que foi digitado.
+      if (error instanceof ApiError && error.code === 'FACE_CHECK_REQUIRED') { pending.current = form; setFaceOpen(true); }
       throw error;
     }
-  }, { ...keys, success: 'Proposta enviada.' });
+  }, { ...keys, invalidate: [...keys.invalidate, 'verification'], success: 'Proposta enviada.' });
+
+  /** Com checagem facial exigida, o envio passa antes pela confirmação do rosto. */
+  function submitProposal(form: FormData) {
+    if (verification.data?.faceCheckRequired) { pending.current = form; setFaceOpen(true); return; }
+    propose.mutate({ form });
+  }
 
   if (q.isPending) return <Loading />;
   if (q.error) return <ErrorState error={q.error} />;
@@ -122,15 +139,33 @@ export default function RequestDetail() {
           </p>
           {r.myProposal ? (
             <p className="text-sm">Sua proposta: <b>{money(r.myProposal.amountCents)}</b> <StatusBadge status={r.myProposal.status} /></p>
+          ) : r.status === 'open' && verification.data && !verification.data.canPropose ? (
+            <Card>
+              <CardHeader><CardTitle className="flex items-center gap-2"><ShieldAlert className="size-5 text-amber-600" aria-hidden /> Verificação necessária</CardTitle></CardHeader>
+              <CardContent className="space-y-3 text-sm">
+                <p>{verification.data.blockedReason}</p>
+                <Button asChild className="h-11 w-full sm:w-auto"><Link href="/perfil#verificacao">Verificar minha identidade</Link></Button>
+              </CardContent>
+            </Card>
           ) : r.status === 'open' && (
             <Card>
               <CardHeader><CardTitle>Enviar proposta</CardTitle></CardHeader>
               <CardContent>
-                <form action={(f) => propose.mutate(f)} className="space-y-3">
+                <form action={submitProposal} className="space-y-3">
                   <div className="space-y-1"><Label htmlFor="amount">Valor em R$</Label><Input id="amount" name="amount" inputMode="decimal" required /></div>
                   <div className="space-y-1"><Label htmlFor="message">Mensagem</Label><Textarea id="message" name="message" minLength={5} maxLength={1000} required /></div>
-                  <Button loading={propose.isPending} className="w-full sm:w-auto">Enviar proposta</Button>
+                  <Button loading={propose.isPending} className="w-full sm:w-auto">
+                    {verification.data?.faceCheckRequired && <ScanFace />} Enviar proposta
+                  </Button>
+                  {verification.data?.faceCheckRequired && (
+                    <p className="text-muted-foreground text-xs">Antes de enviar, confirmamos que é você com o reconhecimento facial.</p>
+                  )}
                 </form>
+                <FaceCheckDialog
+                  open={faceOpen} onOpenChange={setFaceOpen} purpose="proposal" requestId={id}
+                  title="Confirme que é você" description="Uma selfie rápida para proteger os clientes de contas falsas."
+                  onPassed={(faceCheckId) => { if (pending.current) propose.mutate({ form: pending.current, faceCheckId }); }}
+                />
               </CardContent>
             </Card>
           )}

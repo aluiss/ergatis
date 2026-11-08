@@ -24,7 +24,7 @@ export function CommandPalette({ ctx, open, onOpenChange }: { ctx: NavContext; o
   }, [open, onOpenChange]);
 
   const entries = useMemo(() => {
-    const groups = [...visibleGroups(APP_NAV, ctx), ...(ctx.isAdmin ? visibleGroups(ADMIN_NAV, ctx).map((g) => ({ ...g, label: `Admin · ${g.label}` })) : [])];
+    const groups = [...visibleGroups(APP_NAV, ctx), ...(ctx.isStaff ? visibleGroups(ADMIN_NAV, ctx).map((g) => ({ ...g, label: `Admin · ${g.label}` })) : [])];
     const q = normalize(query.trim());
     return groups.flatMap((g) => g.items.map((item) => ({ item, group: g.label })))
       .filter(({ item, group }) => !q || normalize(`${item.label} ${group} ${item.keywords ?? ''}`).includes(q))

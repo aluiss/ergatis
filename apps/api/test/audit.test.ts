@@ -11,7 +11,7 @@ import { db } from '../src/db/client';
 import { auditLogs } from '../src/db/schema';
 import { AuditRetentionService } from '../src/audit/audit-retention.service';
 import { diff, redact } from '../src/audit/audit-policy';
-import { api, createApp, makeAdmin, makeRequest, signUp } from './helpers';
+import { api, createApp, makeAdmin, makeOwner, makeRequest, signUp } from './helpers';
 
 let app: INestApplication;
 beforeAll(async () => { app = await createApp(); });
@@ -149,11 +149,11 @@ describe('contexto, diff e política de dados', () => {
 
   it('a mudança de papel guarda de onde veio e para onde foi', async () => {
     const admin = await signUp(app);
-    await makeAdmin(admin);
+    await makeOwner(admin);
     const target = await signUp(app);
     expect((await api(app, admin).post(`/admin/users/${target.id}/role`, { role: 'admin' })).status).toBe(201);
     const [log] = (await logsFor(target.id)).filter((l) => l.action === 'user.role_changed');
-    expect(log).toMatchObject({ actorId: admin.id, actorRole: 'admin', changes: [{ field: 'role', from: 'user', to: 'admin' }] });
+    expect(log).toMatchObject({ actorId: admin.id, actorRole: 'owner', changes: [{ field: 'role', from: 'user', to: 'admin' }] });
   });
 
   it('a política omite segredos e mascara dados pessoais', () => {

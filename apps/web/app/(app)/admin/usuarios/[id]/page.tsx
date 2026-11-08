@@ -5,6 +5,9 @@ import { useParams } from 'next/navigation';
 import { ErrorState, Loading, pendingFor, post, StatusBadge, useAction } from '@/components/app-ui';
 import { AuditHistory } from '@/components/audit';
 import { ConfirmAction } from '@/components/confirm-action';
+import { RoleControl } from '@/components/role-control';
+import { useAccess } from '@/components/access-provider';
+import { isStaffRole, ROLE_LABELS, type UserRole } from '@ergatis/shared';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -24,6 +27,7 @@ interface Detail {
 
 export default function UserDetail() {
   const { id } = useParams<{ id: string }>();
+  const { can } = useAccess();
   const q = useQuery({ queryKey: ['admin-user', id], queryFn: () => api<Detail>(`/admin/users/${id}`) });
   const keys = { invalidate: ['admin-user', 'admin-users'] };
 
@@ -49,7 +53,8 @@ export default function UserDetail() {
         <h1 className="text-2xl font-bold">{u.name}</h1>
         <p className="text-muted-foreground text-sm">{u.email} · plano efetivo: <b className="capitalize">{u.access.plan}</b></p>
         {u.banned && <p className="text-destructive mt-1 text-sm">Banido: {u.banReason}</p>}
-        <div className="mt-3 flex flex-wrap gap-2">
+        <p className="mt-1"><Badge variant={isStaffRole(u.role) ? 'default' : 'secondary'}>{ROLE_LABELS[u.role as UserRole] ?? u.role}</Badge></p>
+        {can('admin.users', 'edit') && <div className="mt-3 flex flex-wrap gap-2">
           {u.banned ? (
             <ConfirmAction
               title={`Remover o banimento de ${u.name}?`}
@@ -70,20 +75,12 @@ export default function UserDetail() {
               <Button size="sm" variant="destructive">Banir</Button>
             </ConfirmAction>
           )}
-          <ConfirmAction
-            title={u.role === 'admin' ? `Remover ${u.name} da administração?` : `Tornar ${u.name} admin?`}
-            description={u.role === 'admin'
-              ? 'A pessoa perde o acesso ao painel de administração.'
-              : 'A pessoa passa a ver dados de todos os usuários, banir contas, conceder cortesias e alterar preços dos planos.'}
-            confirmLabel={u.role === 'admin' ? 'Remover admin' : 'Tornar admin'} destructive={u.role !== 'admin'}
-            onConfirm={() => role.mutateAsync(u.role === 'admin' ? 'user' : 'admin')}
-          >
-            <Button size="sm" variant="outline">{u.role === 'admin' ? 'Remover admin' : 'Tornar admin'}</Button>
-          </ConfirmAction>
-        </div>
+
+        </div>}
+        <div className="mt-4"><RoleControl name={u.name} current={(u.role ?? 'user') as UserRole} onChange={(r) => role.mutateAsync(r)} /></div>
       </div>
 
-      <Card>
+      {can('grants.manage', 'edit') && <Card>
         <CardHeader><CardTitle>Conceder cortesia</CardTitle></CardHeader>
         <CardContent>
           <form action={(f) => grant.mutate(f)} className="grid gap-3 sm:grid-cols-[8rem_6rem_1fr_auto] sm:items-end">
@@ -93,7 +90,7 @@ export default function UserDetail() {
             <Button loading={grant.isPending}>Conceder</Button>
           </form>
         </CardContent>
-      </Card>
+      </Card>}
 
       <section>
         <h2 className="mb-2 font-semibold">Cortesias</h2>
@@ -102,7 +99,7 @@ export default function UserDetail() {
           {u.grants.map((g) => (
             <li key={g.id} className="flex items-center justify-between gap-3 p-3">
               <span><b className="capitalize">{g.planCode ?? 'Benefício avulso'}</b> · {g.reason}<span className="text-muted-foreground block">{g.endsAt ? `Até ${date(g.endsAt)}` : 'Sem validade'}</span></span>
-              {g.revokedAt ? <Badge variant="secondary">Revogada</Badge> : (
+              {g.revokedAt ? <Badge variant="secondary">Revogada</Badge> : can('grants.manage', 'edit') && (
                 <ConfirmAction
                   title="Revogar esta cortesia?"
                   description={`Os benefícios de "${g.planCode ?? 'benefício avulso'}" deixam de valer na hora.`}
@@ -117,7 +114,7 @@ export default function UserDetail() {
         </ul>
       </section>
 
-      <AuditHistory userId={id} />
+      {can('admin.audit') && <AuditHistory userId={id} />}
 
       <section>
         <h2 className="mb-2 font-semibold">Assinaturas</h2>

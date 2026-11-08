@@ -9,7 +9,9 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/configure-app';
 import { db } from '../src/db/client';
-import { categories, user } from '../src/db/schema';
+import { BIOMETRIC_CONSENT_VERSION } from '@ergatis/shared';
+import sharp from 'sharp';
+import { categories, faceEnrollments, professionals, user } from '../src/db/schema';
 
 export async function createApp() {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -32,8 +34,15 @@ export async function signUp(app: INestApplication, name = 'Pessoa Teste'): Prom
 }
 
 export async function makeAdmin(actor: Actor) {
-  await db.update(user).set({ role: 'admin' }).where(eq(user.id, actor.id));
+  await setRole(actor, 'admin');
 }
+
+/** Papéis valem pela sessão: o próximo request já lê o papel novo do banco. */
+export async function setRole(actor: Actor, role: string) {
+  await db.update(user).set({ role }).where(eq(user.id, actor.id));
+}
+
+export const makeOwner = (actor: Actor) => setRole(actor, 'owner');
 
 export const api = (app: INestApplication, actor?: Actor) => {
   const agent = request(app.getHttpServer());
@@ -52,13 +61,38 @@ export async function anyCategoryId() {
   return row.id;
 }
 
-export async function makeProfessional(app: INestApplication, name = 'Profissional') {
+/**
+ * Profissional pronto para propor: por padrão já verificado (documento e rosto aprovados),
+ * como se tivesse passado pela moderação. `verified: false` para testar o bloqueio.
+ */
+export async function makeProfessional(app: INestApplication, name = 'Profissional', { verified = true } = {}) {
   const actor = await signUp(app, name);
   const res = await api(app, actor).put('/professionals/me', {
     headline: 'Eletricista experiente', serviceRadiusKm: 30, categoryIds: [await anyCategoryId()],
   });
   if (res.status !== 200) throw new Error(`setup ${res.status}: ${res.text}`);
+  if (verified) await markVerified(actor);
   return actor;
+}
+
+export async function markVerified(actor: Actor) {
+  await db.update(professionals).set({ verification: 'approved' }).where(eq(professionals.userId, actor.id));
+  await db.insert(faceEnrollments).values({
+    userId: actor.id, consentVersion: BIOMETRIC_CONSENT_VERSION, consentAt: new Date(), provider: 'fake',
+    subjectRef: `fake_subject_${actor.id}`, status: 'approved', livenessScore: 0.98, capturedAt: new Date(), decidedAt: new Date(),
+  }).onConflictDoNothing();
+}
+
+/** Uma "foto da câmera" que o provedor simulado aceita. */
+export const selfie = () => sharp({ create: { width: 320, height: 320, channels: 3, background: { r: 200, g: 160, b: 140 } } }).jpeg().toBuffer();
+
+/** Checagem facial pelo fluxo real (provedor simulado): inicia, envia a foto, devolve o id. */
+export async function faceCheck(app: INestApplication, actor: Actor, purpose: 'enrollment' | 'proposal', requestId?: string) {
+  const start = await api(app, actor).post('/verification/face-checks', { purpose, requestId });
+  if (start.status !== 201) return { start, checkId: undefined };
+  const done = await request(app.getHttpServer()).post(`/api/verification/face-checks/${start.body.checkId}/complete`)
+    .set('Cookie', actor.cookie).attach('capture', await selfie(), { filename: 'camera.jpg', contentType: 'image/jpeg' });
+  return { start, done, checkId: start.body.checkId as string };
 }
 
 export async function makeRequest(app: INestApplication, client: Actor, title = 'Trocar lâmpada da sala') {
@@ -70,8 +104,13 @@ export async function makeRequest(app: INestApplication, client: Actor, title = 
   return res.body as { id: string };
 }
 
-export const propose = (app: INestApplication, pro: Actor, requestId: string) =>
-  api(app, pro).post(`/requests/${requestId}/proposals`, { amountCents: 15000, message: 'Posso fazer amanhã.' });
+/** Envia proposta como o app faz: confirma o rosto e manda o id da checagem junto. */
+export async function propose(app: INestApplication, pro: Actor, requestId: string, { faceCheck: withCheck = true } = {}) {
+  const check = withCheck ? await faceCheck(app, pro, 'proposal', requestId) : null;
+  return api(app, pro).post(`/requests/${requestId}/proposals`, {
+    amountCents: 15000, message: 'Posso fazer amanhã.', ...(check?.checkId ? { faceCheckId: check.checkId } : {}),
+  });
+}
 
 /** Percorre o fluxo inteiro até a conclusão. */
 export async function completeJob(app: INestApplication, client: Actor, pro: Actor) {

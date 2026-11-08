@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { Empty, ErrorState, Loading, pendingFor, StatusBadge, useAction } from '@/components/app-ui';
 import { ConfirmAction } from '@/components/confirm-action';
+import { useAccess } from '@/components/access-provider';
 import { Button } from '@/components/ui/button';
 import { api } from '@/lib/api';
 import { date } from '@/lib/format';
@@ -11,6 +12,7 @@ import { date } from '@/lib/format';
 interface Item { id: string; targetUserId: string; reason: string; status: string; createdAt: string }
 
 export default function AdminReports() {
+  const { can } = useAccess();
   const q = useQuery({ queryKey: ['admin-reports'], queryFn: () => api<Item[]>('/admin/reports') });
   const update = useAction(({ id, status, resolution }: { id: string; status: string; resolution?: string }) =>
     api(`/admin/reports/${id}`, { method: 'PATCH', body: { status, resolution } }), { invalidate: ['admin-reports'], success: 'Denúncia atualizada.' });
@@ -24,7 +26,7 @@ export default function AdminReports() {
           <div className="flex items-center justify-between gap-3"><Link className="text-primary" href={`/admin/usuarios/${r.targetUserId}`}>Ver usuário denunciado</Link><StatusBadge status={r.status} /></div>
           <p>{r.reason}</p>
           <p className="text-muted-foreground text-xs">{date(r.createdAt)}</p>
-          {['open', 'reviewing'].includes(r.status) && (
+          {['open', 'reviewing'].includes(r.status) && can('admin.reports', 'edit') && (
             <div className="flex gap-2">
               <ConfirmAction
                 title="Marcar a denúncia como resolvida?"

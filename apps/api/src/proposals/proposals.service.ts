@@ -11,6 +11,7 @@ import {
 } from '../db/schema';
 import { EntitlementsService } from '../entitlements/entitlements.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { VerificationService } from '../verification/verification.service';
 
 /** Mês de referência no fuso do Brasil, para o limite virar à meia-noite local. */
 export function currentPeriod(now = new Date()): string {
@@ -26,6 +27,7 @@ export class ProposalsService {
     @InjectDb() private readonly db: Db,
     private readonly entitlements: EntitlementsService,
     private readonly notifications: NotificationsService,
+    private readonly verification: VerificationService,
   ) {}
 
   /** Incremento condicional em uma instrução só: propostas simultâneas não furam o limite. */
@@ -49,10 +51,16 @@ export class ProposalsService {
   }
 
   async create(professionalId: string, requestId: string, input: CreateProposalInput) {
+    const { faceCheckId, ...values } = input;
     try {
       return await this.db.transaction(async (tx) => {
         const [pro] = await tx.select().from(professionals).where(eq(professionals.userId, professionalId));
         if (!pro?.active) throw new ForbiddenException('Crie seu perfil profissional primeiro');
+        // Identidade antes de tudo: sem verificação (fora da carência) ou sem a checagem facial, não há proposta.
+        const gate = await this.verification.proposalGate(professionalId, tx);
+        if (!gate.allowed) throw new ForbiddenException({ code: 'VERIFICATION_REQUIRED', message: gate.reason });
+        const usedCheck = gate.faceCheckRequired
+          ? await this.verification.consumeForProposal(tx, professionalId, faceCheckId, requestId) : null;
 
         const [request] = await tx.select().from(serviceRequests)
           .where(eq(serviceRequests.id, requestId)).for('share');
@@ -64,7 +72,8 @@ export class ProposalsService {
         await this.consumeQuota(tx, professionalId, entitlements.monthlyProposalLimit);
 
         const [proposal] = await tx.insert(proposals)
-          .values({ requestId, professionalId, ...input }).returning();
+          .values({ requestId, professionalId, ...values }).returning();
+        if (usedCheck) await this.verification.linkProposal(tx, usedCheck, proposal.id);
         await tx.insert(conversations).values({
           proposalId: proposal.id, clientId: request.clientId, professionalId,
         });

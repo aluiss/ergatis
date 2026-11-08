@@ -1,3 +1,5 @@
+import sharp from 'sharp';
+import { AccessService } from '../access/access.service';
 import { recordAudit } from '../audit/audit';
 import {
   BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException,
@@ -19,7 +21,10 @@ const ALLOWED: Record<FileKind, string[]> = {
   avatar: IMAGES,
   portfolio: IMAGES,
   verification_document: [...IMAGES, 'application/pdf'],
+  verification_selfie: IMAGES,
 };
+/** Só o dono e quem tem a permissão de documentos abrem. Apagados ao fim da análise. */
+export const PRIVATE_KINDS: readonly FileKind[] = ['verification_document', 'verification_selfie'];
 const EXTENSION: Record<string, string> = {
   'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf',
 };
@@ -42,6 +47,7 @@ export class FilesService {
   constructor(
     @InjectDb() private readonly db: Db,
     @Inject(STORAGE) private readonly storage: Storage,
+    private readonly access: AccessService,
   ) {}
 
   private async countOf(ownerId: string, kind: FileKind) {
@@ -117,6 +123,32 @@ export class FilesService {
     }
   }
 
+  /**
+   * Selfie da verificação facial. Não passa pelo upload comum (que não aceita este tipo):
+   * só o serviço de verificação grava, depois da prova de vida. Recodificada sem
+   * metadados (fotos de celular trazem EXIF com GPS) e substitui a anterior.
+   */
+  async storeSelfie(ownerId: string, image: Buffer) {
+    const body = await sharp(image).rotate().resize(1024, 1024, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer();
+    const storageKey = `${randomUUID()}.jpg`;
+    await this.storage.put(storageKey, body, 'image/jpeg');
+    const previous = await this.db.select().from(files).where(and(eq(files.ownerId, ownerId), eq(files.kind, 'verification_selfie')));
+    const [row] = await this.db.transaction(async (tx) => {
+      if (previous.length) await tx.delete(files).where(and(eq(files.ownerId, ownerId), eq(files.kind, 'verification_selfie')));
+      return tx.insert(files).values({ ownerId, kind: 'verification_selfie', storageKey, mimeType: 'image/jpeg', sizeBytes: body.length }).returning();
+    });
+    await this.removeStored(previous.map((p) => p.storageKey));
+    return this.summary(row);
+  }
+
+  /** Primeira imagem de documento da pessoa (PDF não serve para comparar rosto). */
+  async firstDocumentImage(ownerId: string): Promise<Buffer | null> {
+    const docs = await this.db.select().from(files)
+      .where(and(eq(files.ownerId, ownerId), eq(files.kind, 'verification_document'))).orderBy(asc(files.createdAt));
+    const image = docs.find((d) => d.mimeType.startsWith('image/'));
+    return image ? this.storage.get(image.storageKey) : null;
+  }
+
   async mine(ownerId: string) {
     const rows = await this.db.select().from(files).where(eq(files.ownerId, ownerId)).orderBy(asc(files.createdAt));
     return rows.map((f) => this.summary(f));
@@ -127,11 +159,12 @@ export class FilesService {
     const [file] = await this.db.select().from(files).where(eq(files.id, id));
     if (!file) throw new NotFoundException('Arquivo não encontrado');
 
-    const isPrivate = file.kind === 'verification_document';
+    const isPrivate = PRIVATE_KINDS.includes(file.kind);
     if (isPrivate) {
       const isOwner = viewer?.id === file.ownerId;
-      const isAdmin = viewer?.role === 'admin';
-      if (!isOwner && !isAdmin) throw new NotFoundException('Arquivo não encontrado');
+      // Só quem tem a permissão de documentos (moderação, jurídico...). Para os demais, o arquivo "não existe".
+      const allowed = isOwner || await this.access.can(viewer, 'documents.view', 'edit');
+      if (!allowed) throw new NotFoundException('Arquivo não encontrado');
       if (!isOwner) {
         await recordAudit({
           actorId: viewer!.id, action: 'document.viewed', targetType: 'user', targetId: file.ownerId, metadata: { fileId: id },

@@ -1,7 +1,8 @@
 import {
   BadgeCheck, Briefcase, ClipboardList, CreditCard, FileClock, Flag, Gauge, Handshake, House, MessageCircle,
-  PlusCircle, Receipt, Search, Send, Settings, User, Users, Wrench, type LucideIcon,
+  KeyRound, PlusCircle, Receipt, Search, Send, Settings, SlidersHorizontal, User, Users, Wrench, type LucideIcon,
 } from 'lucide-react';
+import { can, type AccessResource, type ResolvedAccess } from '@ergatis/shared';
 
 /**
  * Registro único da navegação. Menu do topo, barra inferior do celular, menu "Mais",
@@ -11,7 +12,7 @@ import {
  * Visibilidade aqui é conforto de interface. Quem barra o acesso é a API e o layout
  * de cada área no servidor.
  */
-export interface NavContext { isAdmin: boolean; isProfessional: boolean }
+export interface NavContext { isStaff: boolean; isProfessional: boolean; access: ResolvedAccess | null }
 
 export interface NavItem {
   id: string;
@@ -25,6 +26,8 @@ export interface NavItem {
   visible?: (ctx: NavContext) => boolean;
   /** Termos extras para a busca do Ctrl+K. */
   keywords?: string;
+  /** Permissão exigida (área de administração). */
+  resource?: AccessResource;
 }
 
 export interface NavGroup { id: string; label: string; items: NavItem[]; visible?: (ctx: NavContext) => boolean }
@@ -45,7 +48,7 @@ export const ITEMS = {
   perfil: { id: 'perfil', label: 'Perfil', href: '/perfil', icon: User, keywords: 'foto dados portfólio' },
   planos: { id: 'planos', label: 'Planos', href: '/planos', icon: CreditCard, keywords: 'assinatura premium' },
   configuracoes: { id: 'configuracoes', label: 'Configurações', href: '/configuracoes', icon: Settings, keywords: 'tema escuro claro instalar app celular aparência' },
-  admin: { id: 'admin', label: 'Administração', href: '/admin', icon: Gauge, visible: (c) => c.isAdmin },
+  admin: { id: 'admin', label: 'Administração', href: '/admin', icon: Gauge, visible: (c) => c.isStaff },
 } satisfies Record<string, NavItem>;
 
 export const APP_NAV: NavGroup[] = [
@@ -54,7 +57,7 @@ export const APP_NAV: NavGroup[] = [
   { id: 'trabalhar', label: 'Trabalhar', items: [ITEMS.oportunidades, ITEMS.propostas, ITEMS.oferecer] },
   { id: 'conversas', label: 'Conversas', items: [ITEMS.mensagens] },
   { id: 'conta', label: 'Conta', items: [ITEMS.perfil, ITEMS.planos, ITEMS.configuracoes] },
-  { id: 'administracao', label: 'Administração', items: [ITEMS.admin], visible: (c) => c.isAdmin },
+  { id: 'administracao', label: 'Administração', items: [ITEMS.admin], visible: (c) => c.isStaff },
 ];
 
 /** Links do topo no computador: o essencial do dia a dia. O resto fica no menu da conta e no Ctrl+K. */
@@ -72,27 +75,33 @@ export const bottomTabs = (ctx: NavContext): NavItem[] => [
 ];
 
 export const ADMIN_NAV: NavGroup[] = [
-  { id: 'geral', label: 'Geral', items: [{ id: 'admin-home', label: 'Visão geral', href: '/admin', icon: Gauge }] },
+  { id: 'geral', label: 'Geral', items: [{ id: 'admin-home', label: 'Visão geral', href: '/admin', icon: Gauge, resource: 'admin.overview' }] },
   {
     id: 'pessoas', label: 'Pessoas', items: [
-      { id: 'admin-usuarios', label: 'Usuários', href: '/admin/usuarios', icon: Users },
-      { id: 'admin-verificacoes', label: 'Verificações', href: '/admin/verificacoes', icon: BadgeCheck },
-      { id: 'admin-denuncias', label: 'Denúncias', href: '/admin/denuncias', icon: Flag },
+      { id: 'admin-usuarios', label: 'Usuários', href: '/admin/usuarios', icon: Users, resource: 'admin.users' },
+      { id: 'admin-verificacoes', label: 'Verificações', href: '/admin/verificacoes', icon: BadgeCheck, resource: 'admin.verifications' },
+      { id: 'admin-denuncias', label: 'Denúncias', href: '/admin/denuncias', icon: Flag, resource: 'admin.reports' },
     ],
   },
   {
     id: 'receita', label: 'Receita', items: [
-      { id: 'admin-planos', label: 'Planos', href: '/admin/planos', icon: CreditCard },
-      { id: 'admin-assinaturas', label: 'Assinaturas', href: '/admin/assinaturas', icon: Receipt },
+      { id: 'admin-planos', label: 'Planos', href: '/admin/planos', icon: CreditCard, resource: 'admin.plans' },
+      { id: 'admin-assinaturas', label: 'Assinaturas', href: '/admin/assinaturas', icon: Receipt, resource: 'admin.subscriptions' },
     ],
   },
-  { id: 'seguranca', label: 'Segurança', items: [{ id: 'admin-auditoria', label: 'Auditoria', href: '/admin/auditoria', icon: FileClock }] },
+  {
+    id: 'seguranca', label: 'Segurança', items: [
+      { id: 'admin-auditoria', label: 'Auditoria', href: '/admin/auditoria', icon: FileClock, resource: 'admin.audit' },
+      { id: 'admin-acesso', label: 'Controle de acesso', href: '/admin/acesso', icon: KeyRound, resource: 'admin.access' },
+    ],
+  },
+  { id: 'plataforma', label: 'Plataforma', items: [{ id: 'admin-regras', label: 'Regras da plataforma', href: '/admin/regras', icon: SlidersHorizontal, resource: 'admin.settings' }] },
 ];
 
 export const visibleGroups = (groups: NavGroup[], ctx: NavContext) =>
   groups
     .filter((g) => !g.visible || g.visible(ctx))
-    .map((g) => ({ ...g, items: g.items.filter((i) => !i.visible || i.visible(ctx)) }))
+    .map((g) => ({ ...g, items: g.items.filter((i) => (!i.visible || i.visible(ctx)) && (!i.resource || can(ctx.access, i.resource))) }))
     .filter((g) => g.items.length > 0);
 
 const pathOf = (href: string) => href.split('#')[0];

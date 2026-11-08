@@ -8,7 +8,7 @@ import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { db } from '../src/db/client';
 import { auditLogs, legalAcceptances } from '../src/db/schema';
-import { api, completeJob, createApp, makeAdmin, makeProfessional, signUp, type Actor } from './helpers';
+import { api, completeJob, createApp, faceCheck, makeAdmin, makeProfessional, signUp, type Actor } from './helpers';
 
 const solid = (width: number, height: number) => sharp({
   create: { width, height, channels: 3, background: { r: 30, g: 90, b: 200 } },
@@ -155,15 +155,23 @@ describe('upload', () => {
 });
 
 describe('verificação com documento', () => {
-  it('documento é privado, a visualização é auditada e ele some após a decisão', async () => {
+  it('documento e selfie são privados, a visualização é auditada e eles somem após a decisão', async () => {
     const admin = await signUp(app);
     await makeAdmin(admin);
-    const pro = await makeProfessional(app);
+    const pro = await makeProfessional(app, 'Profissional', { verified: false });
     const stranger = await signUp(app);
+    const ask = () => api(app, pro).post('/professionals/me/verification');
 
-    expect((await api(app, pro).post('/professionals/me/verification')).status).toBe(400);
+    expect((await ask()).status).toBe(400); // sem documento
     const doc = (await upload(pro, 'verification_document', PDF, 'rg.pdf', 'application/pdf')).body;
-    expect((await api(app, pro).post('/professionals/me/verification')).status).toBe(201);
+    expect((await ask()).body.message).toMatch(/biometria/); // sem consentimento
+    // Sem consentimento, nem a captura começa.
+    expect((await api(app, pro).post('/verification/face-checks', { purpose: 'enrollment' })).status).toBe(403);
+    expect((await api(app, pro).post('/verification/consent')).status).toBe(201);
+    expect((await ask()).body.message).toMatch(/reconhecimento facial/); // sem rosto
+    const enrolled = await faceCheck(app, pro, 'enrollment');
+    expect(enrolled.done?.body.status).toBe('passed');
+    expect((await ask()).status).toBe(201);
 
     expect((await raw(`/files/${doc.id}`)).status).toBe(404);
     expect((await raw(`/files/${doc.id}`, stranger)).status).toBe(404);
@@ -173,14 +181,21 @@ describe('verificação com documento', () => {
     expect(own.headers['content-disposition']).toContain('attachment');
 
     const queue = (await api(app, admin).get('/admin/verifications')).body;
-    expect(queue.find((v: { userId: string }) => v.userId === pro.id).documents).toHaveLength(1);
+    const item = queue.find((v: { userId: string }) => v.userId === pro.id);
+    expect(item.documents).toHaveLength(1);
+    expect(item.face).toMatchObject({ livenessScore: 0.98 });
+    expect(item.face.selfieFileId).toBeTruthy();
+    expect((await raw(`/files/${item.face.selfieFileId}`, stranger)).status).toBe(404);
     expect((await raw(`/files/${doc.id}`, admin)).status).toBe(200);
+    expect((await raw(`/files/${item.face.selfieFileId}`, admin)).status).toBe(200);
     const logs = await db.select().from(auditLogs).where(eq(auditLogs.targetId, pro.id));
-    expect(logs.map((l) => l.action)).toContain('document.viewed');
+    expect(logs.map((l) => l.action)).toEqual(expect.arrayContaining(['document.viewed', 'face.enrolled']));
 
     expect((await api(app, admin).post(`/admin/verifications/${pro.id}`, { approved: true })).status).toBe(201);
     expect((await raw(`/files/${doc.id}`, admin)).status).toBe(404);
+    expect((await raw(`/files/${item.face.selfieFileId}`, admin)).status).toBe(404);
     expect((await api(app).get(`/professionals/${pro.id}`)).body.verified).toBe(true);
+    expect((await api(app, pro).get('/verification/me')).body).toMatchObject({ canPropose: true, faceCheckRequired: true, face: { status: 'approved' } });
   });
 
   it('excluir a conta apaga os arquivos do disco', async () => {

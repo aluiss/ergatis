@@ -4,17 +4,25 @@ import { ChevronRight } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useRef } from 'react';
-import { activeItem, ADMIN_NAV, trail } from '@/lib/navigation';
+import { useAccess } from '@/components/access-provider';
+import { activeItem, ADMIN_NAV, trail, type NavGroup } from '@/lib/navigation';
 import { cn } from '@/lib/utils';
 
-const items = ADMIN_NAV.flatMap((g) => g.items);
+/** Só o que a pessoa pode abrir. */
+function useAdminNav(): NavGroup[] {
+  const { can } = useAccess();
+  return ADMIN_NAV
+    .map((g) => ({ ...g, items: g.items.filter((i) => !i.resource || can(i.resource)) }))
+    .filter((g) => g.items.length > 0);
+}
 
 /** Menu lateral agrupado a partir de `lg`. */
 export function AdminSidebar() {
-  const current = activeItem(usePathname(), items);
+  const groups = useAdminNav();
+  const current = activeItem(usePathname(), groups.flatMap((g) => g.items));
   return (
     <nav aria-label="Administração" className="sticky top-20 hidden w-52 shrink-0 space-y-4 self-start lg:block">
-      {ADMIN_NAV.map((g) => (
+      {groups.map((g) => (
         <div key={g.id}>
           <h2 className="text-muted-foreground mb-1 px-2 text-xs font-medium tracking-wide uppercase">{g.label}</h2>
           <ul className="space-y-0.5">
@@ -38,6 +46,7 @@ export function AdminSidebar() {
 
 /** Abaixo de `lg`: abas que rolam de lado, já posicionadas na página atual. */
 export function AdminTabs() {
+  const items = useAdminNav().flatMap((g) => g.items);
   const current = activeItem(usePathname(), items);
   const activeRef = useRef<HTMLAnchorElement>(null);
   useEffect(() => { activeRef.current?.scrollIntoView({ block: 'nearest', inline: 'center' }); }, [current?.id]);

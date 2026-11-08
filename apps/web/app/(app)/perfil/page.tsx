@@ -104,7 +104,7 @@ export default function Profile() {
       </Card>
 
       {pro && <PortfolioCard />}
-      {pro && <VerificationCard status={pro.verification} />}
+      {pro && <VerificationCard />}
 
       <Card id="privacidade" className="scroll-mt-20">
         <CardHeader><CardTitle>Privacidade</CardTitle></CardHeader>

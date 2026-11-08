@@ -7,6 +7,7 @@ import { ErrorState, Loading } from '@/components/app-ui';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { isStaffRole, ROLE_LABELS } from '@ergatis/shared';
 import { api } from '@/lib/api';
 
 interface Result { items: { id: string; name: string; email: string; role: string; banned: boolean }[]; total: number; pageSize: number }
@@ -30,7 +31,7 @@ export default function Users() {
               <li key={u.id}>
                 <Link href={`/admin/usuarios/${u.id}`} className="hover:bg-muted flex items-center justify-between gap-3 p-3 text-sm">
                   <span><b>{u.name}</b><span className="text-muted-foreground block">{u.email}</span></span>
-                  <span className="flex gap-1">{u.role === 'admin' && <Badge>Admin</Badge>}{u.banned && <Badge variant="destructive">Banido</Badge>}</span>
+                  <span className="flex gap-1">{isStaffRole(u.role) && <Badge>{ROLE_LABELS[u.role]}</Badge>}{u.banned && <Badge variant="destructive">Banido</Badge>}</span>
                 </Link>
               </li>
             ))}

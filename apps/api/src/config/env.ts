@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { AUDIT_MIN_RETENTION_MONTHS } from '@ergatis/shared';
+import { AUDIT_MIN_RETENTION_MONTHS, USER_ROLES } from '@ergatis/shared';
 
 // Em produção as variáveis vêm do ambiente; o arquivo é opcional.
 try { process.loadEnvFile(); } catch { /* sem .env */ }
@@ -36,12 +36,24 @@ const schema = z.object({
   SEED_USER: blankAsUndefined(z.email().optional()),
   SEED_PASSWORD: blankAsUndefined(z.string().min(8).optional()),
   SEED_NAME: blankAsUndefined(z.string().optional()),
-  SEED_ROLE: z.enum(['user', 'admin']).default('user'),
+  SEED_ROLE: z.enum(USER_ROLES).default('user'),
   /** Meses de auditoria guardados. O Marco Civil (art. 15) exige ao menos 6 para registros de acesso. */
+  /** Provedor de reconhecimento facial. Só o simulado existe por enquanto; veja verification/face-provider.ts. */
+  FACE_PROVIDER: z.enum(['fake']).default('fake'),
+  /** Simulado em produção só por decisão explícita: ele aprova qualquer rosto. */
+  FACE_FAKE_ALLOWED_IN_PRODUCTION: z.stringbool().default(false),
+  /** `fail` faz o simulado reprovar tudo (testar caminhos de erro). */
+  FACE_FAKE_RESULT: z.enum(['pass', 'fail']).default('pass'),
+  /** Notas mínimas (0 a 1) para aprovar prova de vida e comparação. */
+  FACE_MIN_LIVENESS: z.coerce.number().min(0).max(1).default(0.9),
+  FACE_MIN_MATCH: z.coerce.number().min(0).max(1).default(0.9),
   AUDIT_RETENTION_MONTHS: z.coerce.number().int().min(AUDIT_MIN_RETENTION_MONTHS).max(120).default(12),
 }).superRefine((v, ctx) => {
   if (Boolean(v.SEED_USER) !== Boolean(v.SEED_PASSWORD)) {
     ctx.addIssue({ code: 'custom', path: ['SEED_USER'], message: 'Informe SEED_USER e SEED_PASSWORD juntos' });
+  }
+  if (v.NODE_ENV === 'production' && v.FACE_PROVIDER === 'fake' && !v.FACE_FAKE_ALLOWED_IN_PRODUCTION) {
+    ctx.addIssue({ code: 'custom', path: ['FACE_PROVIDER'], message: 'O provedor facial simulado aprova qualquer rosto. Configure um provedor real ou, só para testes, FACE_FAKE_ALLOWED_IN_PRODUCTION=true' });
   }
   if (v.NODE_ENV === 'production' && v.BILLING_PROVIDER === 'fake') {
     ctx.addIssue({ code: 'custom', path: ['BILLING_PROVIDER'], message: 'Não use "fake" em produção' });
