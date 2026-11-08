@@ -3,25 +3,36 @@ import {
   Param, ParseUUIDPipe, Patch, Post, Query,
 } from '@nestjs/common';
 import { Roles } from '@thallesp/nestjs-better-auth';
-import { and, count, desc, eq, ilike, isNull, or, sql } from 'drizzle-orm';
+import { and, count, desc, eq, ilike, inArray, isNull, like, or, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
 import {
   grantSchema, PLAN_CODES, REPORT_STATUSES, type GrantInput,
 } from '@ergatis/shared';
 import { InjectDb } from '../common/db.module';
+import { SkipAudit } from '../audit/audit.interceptor';
 import { UserId } from '../common/user-id.decorator';
 import { ZodPipe } from '../common/zod.pipe';
 import type { Db, DbOrTx } from '../db/client';
 import {
-  auditLogs, engagements, entitlementGrants, plans, professionals, reports, serviceRequests,
+  auditLogs, engagements, entitlementGrants, files, plans, professionals, reports, serviceRequests,
   session, subscriptions, user,
 } from '../db/schema';
 import { EntitlementsService } from '../entitlements/entitlements.service';
+import { FilesService } from '../files/files.service';
 import { NotificationsService } from '../notifications/notifications.service';
 
 const listSchema = z.object({
   q: z.string().trim().max(120).optional(),
   page: z.coerce.number().int().min(1).default(1),
+});
+const auditListSchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  /** Prefixo da ação: "auth." traz login, logout, senha etc. */
+  action: z.string().trim().max(80).regex(/^[a-z_.]*$/).optional(),
+  /** Nome ou e-mail de quem fez ou de quem sofreu a ação. */
+  q: z.string().trim().max(120).optional(),
+  targetId: z.string().trim().max(80).optional(),
 });
 const banSchema = z.object({ reason: z.string().trim().min(3).max(500) });
 const roleSchema = z.object({ role: z.enum(['user', 'admin']) });
@@ -51,6 +62,7 @@ class AdminService {
     @InjectDb() private readonly db: Db,
     private readonly entitlements: EntitlementsService,
     private readonly notifications: NotificationsService,
+    private readonly files: FilesService,
   ) {}
 
   private audit(tx: DbOrTx, actorId: string, action: string, targetType: string, targetId: string, metadata?: unknown) {
@@ -192,14 +204,18 @@ class AdminService {
     });
   }
 
-  pendingVerifications() {
-    return this.db.select({ userId: professionals.userId, headline: professionals.headline, name: user.name, email: user.email })
+  async pendingVerifications() {
+    const pending = await this.db.select({ userId: professionals.userId, headline: professionals.headline, name: user.name, email: user.email })
       .from(professionals).innerJoin(user, eq(user.id, professionals.userId))
       .where(eq(professionals.verification, 'pending')).limit(100);
+    const documents = pending.length === 0 ? [] : await this.db
+      .select({ id: files.id, ownerId: files.ownerId, mimeType: files.mimeType }).from(files)
+      .where(and(eq(files.kind, 'verification_document'), inArray(files.ownerId, pending.map((p) => p.userId))));
+    return pending.map((p) => ({ ...p, documents: documents.filter((d) => d.ownerId === p.userId) }));
   }
 
   async decideVerification(actorId: string, id: string, approved: boolean) {
-    return this.db.transaction(async (tx) => {
+    const result = await this.db.transaction(async (tx) => {
       const [updated] = await tx.update(professionals).set({ verification: approved ? 'approved' : 'rejected' })
         .where(and(eq(professionals.userId, id), eq(professionals.verification, 'pending'))).returning({ id: professionals.userId });
       if (!updated) throw new NotFoundException('Solicitação não encontrada');
@@ -207,15 +223,40 @@ class AdminService {
       await this.notifications.notify(tx, id, 'verification_decided', approved ? 'Seu perfil foi verificado.' : 'Sua verificação foi recusada.');
       return { ok: true };
     });
+    // Decidido o pedido, não há motivo para manter documento de identidade.
+    await this.files.removeAll(id, 'verification_document');
+    return result;
   }
 
-  auditLogs(page: number) {
-    return this.db.select().from(auditLogs).orderBy(desc(auditLogs.createdAt))
+  async auditLogs({ page, action, q, targetId }: z.infer<typeof auditListSchema>) {
+    const actor = alias(user, 'actor');
+    const target = alias(user, 'target');
+    const where = and(
+      action ? like(auditLogs.action, `${action}%`) : undefined,
+      targetId ? eq(auditLogs.targetId, targetId) : undefined,
+      q ? or(ilike(actor.email, `%${q}%`), ilike(actor.name, `%${q}%`), ilike(target.email, `%${q}%`), ilike(target.name, `%${q}%`)) : undefined,
+    );
+    const from = () => this.db.select().from(auditLogs)
+      .leftJoin(actor, eq(actor.id, auditLogs.actorId))
+      .leftJoin(target, and(eq(auditLogs.targetType, 'user'), eq(sql`${target.id}::text`, auditLogs.targetId)));
+    const rows = await from().where(where).orderBy(desc(auditLogs.createdAt))
       .limit(PAGE_SIZE).offset((page - 1) * PAGE_SIZE);
+    const [{ total }] = await this.db.select({ total: count() }).from(auditLogs)
+      .leftJoin(actor, eq(actor.id, auditLogs.actorId))
+      .leftJoin(target, and(eq(auditLogs.targetType, 'user'), eq(sql`${target.id}::text`, auditLogs.targetId)))
+      .where(where);
+    const person = (u: typeof user.$inferSelect | null) => (u ? { id: u.id, name: u.name, email: u.email } : null);
+    const items = rows.map((r) => ({
+      ...r.audit_logs,
+      actor: person(r.actor),
+      targetUser: person(r.target),
+    }));
+    return { items, total, page, pageSize: PAGE_SIZE };
   }
 }
 
 @Roles(['admin'])
+@SkipAudit('o serviço registra cada ação de admin na mesma transação')
 @Controller('admin')
 class AdminController {
   constructor(private readonly service: AdminService) {}
@@ -271,7 +312,7 @@ class AdminController {
   }
 
   @Get('audit-logs')
-  audit(@Query(new ZodPipe(listSchema)) q: z.infer<typeof listSchema>) { return this.service.auditLogs(q.page); }
+  audit(@Query(new ZodPipe(auditListSchema)) q: z.infer<typeof auditListSchema>) { return this.service.auditLogs(q); }
 }
 
 @Module({ controllers: [AdminController], providers: [AdminService] })

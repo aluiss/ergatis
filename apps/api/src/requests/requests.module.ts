@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Module, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import { createRequestSchema, type CreateRequestInput } from '@ergatis/shared';
+import { Audit } from '../audit/audit.interceptor';
 import { UserId } from '../common/user-id.decorator';
 import { ZodPipe } from '../common/zod.pipe';
 import { RequestsService } from './requests.service';
@@ -8,7 +9,7 @@ import { RequestsService } from './requests.service';
 class RequestsController {
   constructor(private readonly service: RequestsService) {}
 
-  @Post()
+  @Post() @Audit('service_request.created', 'service_request')
   create(@UserId() userId: string, @Body(new ZodPipe(createRequestSchema)) body: CreateRequestInput) {
     return this.service.create(userId, body);
   }
@@ -21,7 +22,7 @@ class RequestsController {
     return this.service.detail(userId, id);
   }
 
-  @Post(':id/cancel')
+  @Post(':id/cancel') @Audit('service_request.cancelled', 'service_request', { targetParam: 'id' })
   cancel(@UserId() userId: string, @Param('id', ParseUUIDPipe) id: string) {
     return this.service.cancel(userId, id);
   }

@@ -1,9 +1,10 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AuthModule } from '@thallesp/nestjs-better-auth';
 import { AccountModule } from './account/account.module';
 import { AdminModule } from './admin/admin.module';
+import { AuditInterceptor } from './audit/audit.interceptor';
 import { auth } from './auth/auth';
 import { BillingModule } from './billing/billing.module';
 import { CategoriesModule } from './categories/categories.module';
@@ -11,6 +12,7 @@ import { DbModule } from './common/db.module';
 import { env } from './config/env';
 import { EngagementsModule } from './engagements/engagements.module';
 import { EntitlementsModule } from './entitlements/entitlements.module';
+import { FilesModule } from './files/files.module';
 import { HealthModule } from './health/health.module';
 import { MessagingModule } from './messaging/messaging.module';
 import { NotificationsModule } from './notifications/notifications.module';
@@ -26,6 +28,7 @@ import { RequestsModule } from './requests/requests.module';
     DbModule,
     EntitlementsModule,
     NotificationsModule,
+    FilesModule,
     HealthModule,
     CategoriesModule,
     AccountModule,
@@ -38,6 +41,9 @@ import { RequestsModule } from './requests/requests.module';
     BillingModule,
     AdminModule,
   ],
-  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },
+  ],
 })
 export class AppModule {}

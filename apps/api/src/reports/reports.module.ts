@@ -2,6 +2,7 @@ import { Body, Controller, Injectable, Module, Post } from '@nestjs/common';
 import { BadRequestException } from '@nestjs/common';
 import { createReportSchema, type CreateReportInput } from '@ergatis/shared';
 import { InjectDb } from '../common/db.module';
+import { Audit } from '../audit/audit.interceptor';
 import { UserId } from '../common/user-id.decorator';
 import { ZodPipe } from '../common/zod.pipe';
 import type { Db } from '../db/client';
@@ -22,7 +23,7 @@ class ReportsService {
 class ReportsController {
   constructor(private readonly service: ReportsService) {}
 
-  @Post()
+  @Post() @Audit('report.created', 'report')
   create(@UserId() userId: string, @Body(new ZodPipe(createReportSchema)) body: CreateReportInput) {
     return this.service.create(userId, body);
   }

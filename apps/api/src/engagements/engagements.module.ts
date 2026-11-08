@@ -6,6 +6,7 @@ import { desc, eq, or, sql } from 'drizzle-orm';
 import { createReviewSchema, type CreateReviewInput } from '@ergatis/shared';
 import { InjectDb } from '../common/db.module';
 import { isUniqueViolation } from '../common/pg-errors';
+import { Audit } from '../audit/audit.interceptor';
 import { UserId } from '../common/user-id.decorator';
 import { ZodPipe } from '../common/zod.pipe';
 import type { Db } from '../db/client';
@@ -88,13 +89,13 @@ class EngagementsController {
 
   @Get('mine') mine(@UserId() userId: string) { return this.service.mine(userId); }
 
-  @Post(':id/complete')
+  @Post(':id/complete') @Audit('engagement.completed', 'engagement', { targetParam: 'id' })
   complete(@UserId() userId: string, @Param('id', ParseUUIDPipe) id: string) { return this.service.complete(userId, id); }
 
-  @Post(':id/cancel')
+  @Post(':id/cancel') @Audit('engagement.cancelled', 'engagement', { targetParam: 'id' })
   cancel(@UserId() userId: string, @Param('id', ParseUUIDPipe) id: string) { return this.service.cancel(userId, id); }
 
-  @Post(':id/review')
+  @Post(':id/review') @Audit('review.created', 'engagement', { targetParam: 'id' })
   review(
     @UserId() userId: string,
     @Param('id', ParseUUIDPipe) id: string,

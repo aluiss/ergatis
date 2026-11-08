@@ -1,6 +1,7 @@
 import { BadgeCheck, Crown, Star } from 'lucide-react';
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { Avatar } from '@/components/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -11,7 +12,7 @@ import { publicGet } from '@/lib/server-api';
 export const metadata: Metadata = { title: 'Profissionais' };
 
 interface Item {
-  userId: string; displayName: string; headline: string; city: string | null; state: string | null;
+  userId: string; displayName: string; avatarFileId: string | null; headline: string; city: string | null; state: string | null;
   verified: boolean; highlighted: boolean; badge: boolean; ratingAverage: number | null; ratingTotal: number;
 }
 interface Result { items: Item[]; total: number; page: number; pageSize: number }
@@ -49,12 +50,17 @@ export default async function Professionals({ searchParams }: { searchParams: Pr
           <Link key={p.userId} href={`/profissionais/${p.userId}`}>
             <Card className={p.highlighted ? 'border-primary h-full' : 'h-full'}>
               <CardContent>
-                <div className="flex items-center gap-2">
-                  <h2 className="font-medium">{p.displayName}</h2>
-                  {p.badge && <Crown className="size-4 text-amber-500" aria-label="Selo Premium" />}
-                  {p.verified && <BadgeCheck className="text-primary size-4" aria-label="Verificado" />}
+                <div className="flex items-center gap-3">
+                  <Avatar fileId={p.avatarFileId} name={p.displayName} />
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <h2 className="truncate font-medium">{p.displayName}</h2>
+                      {p.badge && <Crown className="size-4 shrink-0 text-amber-500" aria-label="Selo Premium" />}
+                      {p.verified && <BadgeCheck className="text-primary size-4 shrink-0" aria-label="Verificado" />}
+                    </div>
+                    <p className="text-muted-foreground text-sm">{p.headline}</p>
+                  </div>
                 </div>
-                <p className="text-muted-foreground mt-1 text-sm">{p.headline}</p>
                 <div className="mt-3 flex items-center justify-between text-sm">
                   <span>{[p.city, p.state].filter(Boolean).join(' - ') || 'Local não informado'}</span>
                   {p.ratingTotal > 0 ? (

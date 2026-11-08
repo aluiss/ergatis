@@ -4,6 +4,7 @@ import {
 import { timingSafeEqual } from 'node:crypto';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { SubscribeInput } from '@ergatis/shared';
+import { recordAudit } from '../audit/audit';
 import { InjectDb } from '../common/db.module';
 import { isUniqueViolation } from '../common/pg-errors';
 import { env } from '../config/env';
@@ -170,6 +171,10 @@ export class BillingService {
           }
           break;
       }
+      await recordAudit({
+        action: 'billing.event_processed', targetType: 'subscription', targetId: subscription.id,
+        metadata: { event: type, eventId, userId: subscription.userId },
+      }, tx);
       return { processed: true };
     });
   }

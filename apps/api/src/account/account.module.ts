@@ -4,14 +4,16 @@ import {
 import { and, eq, or } from 'drizzle-orm';
 import { updateProfileSchema, type UpdateProfileInput } from '@ergatis/shared';
 import { InjectDb } from '../common/db.module';
+import { Audit, SkipAudit } from '../audit/audit.interceptor';
 import { UserId } from '../common/user-id.decorator';
 import { ZodPipe } from '../common/zod.pipe';
 import type { Db } from '../db/client';
 import {
-  account, auditLogs, engagements, professionalCategories, professionals, profiles, proposalUsage, reviews, serviceRequests, session,
+  account, auditLogs, engagements, legalAcceptances, professionalCategories, professionals, profiles, proposalUsage, reviews, serviceRequests, session,
   subscriptions, user,
 } from '../db/schema';
 import { EntitlementsService } from '../entitlements/entitlements.service';
+import { FilesService } from '../files/files.service';
 import { currentPeriod } from '../proposals/proposals.service';
 
 @Injectable()
@@ -19,6 +21,7 @@ class AccountService {
   constructor(
     @InjectDb() private readonly db: Db,
     private readonly entitlements: EntitlementsService,
+    private readonly files: FilesService,
   ) {}
 
   async me(userId: string) {
@@ -50,6 +53,8 @@ class AccountService {
     return {
       identity,
       ...(await this.me(userId)),
+      files: await this.files.mine(userId),
+      legalAcceptances: await this.db.select().from(legalAcceptances).where(eq(legalAcceptances.userId, userId)),
       requests: await this.db.select().from(serviceRequests).where(eq(serviceRequests.clientId, userId)),
       reviewsWritten: await this.db.select().from(reviews).where(eq(reviews.reviewerId, userId)),
       subscriptions: await this.db.select().from(subscriptions).where(eq(subscriptions.userId, userId)),
@@ -86,6 +91,7 @@ class AccountService {
       await tx.delete(account).where(eq(account.userId, userId));
       await tx.insert(auditLogs).values({ actorId: userId, action: 'account.deleted', targetType: 'user', targetId: userId });
     });
+    await this.files.removeAll(userId);
     return { ok: true };
   }
 }
@@ -96,13 +102,13 @@ class AccountController {
 
   @Get() me(@UserId() userId: string) { return this.service.me(userId); }
 
-  @Patch()
+  @Patch() @Audit('profile.updated', 'user', { targetSelf: true })
   update(@UserId() userId: string, @Body(new ZodPipe(updateProfileSchema)) body: UpdateProfileInput) {
     return this.service.update(userId, body);
   }
 
-  @Get('export') export(@UserId() userId: string) { return this.service.export(userId); }
-  @Delete() remove(@UserId() userId: string) { return this.service.remove(userId); }
+  @Get('export') @Audit('account.data_exported', 'user', { targetSelf: true }) export(@UserId() userId: string) { return this.service.export(userId); }
+  @Delete() @SkipAudit('registrado na transação de exclusão') remove(@UserId() userId: string) { return this.service.remove(userId); }
 }
 
 @Module({ controllers: [AccountController], providers: [AccountService] })

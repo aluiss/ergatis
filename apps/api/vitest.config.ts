@@ -16,6 +16,8 @@ export default defineConfig({
       API_URL: 'http://localhost:3333',
       BETTER_AUTH_SECRET: 'test-secret-test-secret-test-secret-123',
       BILLING_PROVIDER: 'fake',
+      STORAGE_DRIVER: 'local',
+      UPLOAD_DIR: '/tmp/ergatis-test-uploads',
       ASAAS_WEBHOOK_TOKEN: 'webhook-token',
     },
   },

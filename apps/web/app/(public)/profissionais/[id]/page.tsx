@@ -1,12 +1,14 @@
 import { BadgeCheck, Crown, Star } from 'lucide-react';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
+import { Avatar } from '@/components/avatar';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { date } from '@/lib/format';
 import { publicGet } from '@/lib/server-api';
 
 interface Profile {
-  displayName: string; headline: string; bio: string | null; city: string | null; state: string | null;
+  displayName: string; avatarFileId: string | null; portfolio: { id: string; caption: string | null }[] | null;
+  headline: string; bio: string | null; city: string | null; state: string | null;
   verified: boolean; badge: boolean;
   rating: { average: number | null; total: number };
   latestReviews: { rating: number; comment: string | null; createdAt: string }[];
@@ -27,7 +29,9 @@ export default async function ProfessionalPage({ params }: { params: Promise<{ i
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-8">
-      <div>
+      <div className="flex items-start gap-4">
+        <Avatar fileId={p.avatarFileId} name={p.displayName} className="size-20" />
+        <div>
         <h1 className="flex items-center gap-2 text-3xl font-bold">
           {p.displayName}
           {p.badge && <Crown className="size-6 text-amber-500" aria-label="Selo Premium" />}
@@ -38,8 +42,26 @@ export default async function ProfessionalPage({ params }: { params: Promise<{ i
           {[p.city, p.state].filter(Boolean).join(' - ')}
           {p.rating.total > 0 && ` · nota ${p.rating.average?.toFixed(1)} em ${p.rating.total} avaliação(ões)`}
         </p>
+        </div>
       </div>
       {p.bio && <p>{p.bio}</p>}
+
+      {p.portfolio && p.portfolio.length > 0 && (
+        <Card>
+          <CardHeader><CardTitle>Portfólio</CardTitle></CardHeader>
+          <CardContent>
+            <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {p.portfolio.map((f) => (
+                <li key={f.id}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={`/api/files/${f.id}`} alt={f.caption ?? 'Imagem do portfólio'} loading="lazy" className="aspect-square w-full rounded-md object-cover" />
+                  {f.caption && <p className="text-muted-foreground mt-1 text-xs">{f.caption}</p>}
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
 
       {p.completedServices && (
         <Card>

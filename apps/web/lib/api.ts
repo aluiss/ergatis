@@ -18,3 +18,16 @@ export async function api<T = unknown>(path: string, init?: { method?: string; b
   }
   return (res.status === 204 ? undefined : await res.json()) as T;
 }
+
+export async function uploadFile(kind: string, file: File, caption?: string) {
+  const form = new FormData();
+  form.set('kind', kind);
+  if (caption) form.set('caption', caption);
+  form.set('file', file);
+  const res = await fetch('/api/files', { method: 'POST', body: form, credentials: 'include' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new ApiError(res.status === 413 ? 'O arquivo é grande demais.' : data?.message ?? 'Não foi possível enviar o arquivo.', res.status);
+  }
+  return res.json() as Promise<{ id: string }>;
+}

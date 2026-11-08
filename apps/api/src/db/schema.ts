@@ -4,7 +4,7 @@ import {
   primaryKey, text, timestamp, uniqueIndex, uuid, varchar,
 } from 'drizzle-orm/pg-core';
 import {
-  ENGAGEMENT_STATUSES, PLAN_CODES, PROPOSAL_STATUSES, REPORT_STATUSES,
+  ENGAGEMENT_STATUSES, FILE_KINDS, PLAN_CODES, PROPOSAL_STATUSES, REPORT_STATUSES,
   REQUEST_STATUSES, SUBSCRIPTION_STATUSES, VERIFICATION_STATUSES,
   type Entitlements,
 } from '@ergatis/shared';
@@ -21,6 +21,7 @@ export const subscriptionStatus = pgEnum('subscription_status', SUBSCRIPTION_STA
 export const reportStatus = pgEnum('report_status', REPORT_STATUSES);
 export const verificationStatus = pgEnum('verification_status', VERIFICATION_STATUSES);
 export const planCode = pgEnum('plan_code', PLAN_CODES);
+export const fileKind = pgEnum('file_kind', FILE_KINDS);
 
 /* Better Auth */
 export const user = pgTable('user', {
@@ -33,6 +34,7 @@ export const user = pgTable('user', {
   banned: boolean().default(false),
   banReason: text(),
   banExpires: timestamp(tz),
+  termsVersion: text(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -74,11 +76,33 @@ export const verification = pgTable('verification', {
   updatedAt: updatedAt(),
 }, (t) => [index('verification_identifier_idx').on(t.identifier)]);
 
+/** Prova do aceite: registro imutável por versão dos documentos legais. */
+export const legalAcceptances = pgTable('legal_acceptances', {
+  id: id(),
+  userId: uuid().notNull().references(() => user.id, { onDelete: 'cascade' }),
+  version: varchar({ length: 20 }).notNull(),
+  ipAddress: varchar({ length: 64 }),
+  acceptedAt: timestamp(tz).notNull().defaultNow(),
+}, (t) => [uniqueIndex('legal_acceptances_unique').on(t.userId, t.version)]);
+
+export const files = pgTable('files', {
+  id: id(),
+  ownerId: uuid().notNull().references(() => user.id, { onDelete: 'cascade' }),
+  kind: fileKind().notNull(),
+  storageKey: varchar({ length: 120 }).notNull().unique(),
+  mimeType: varchar({ length: 50 }).notNull(),
+  sizeBytes: integer().notNull(),
+  caption: varchar({ length: 140 }),
+  createdAt: createdAt(),
+}, (t) => [index('files_owner_idx').on(t.ownerId, t.kind)]);
+
 /* Perfis: a mesma pessoa pode contratar e prestar serviços. */
 export const profiles = pgTable('profiles', {
   userId: uuid().primaryKey().references(() => user.id, { onDelete: 'cascade' }),
   displayName: varchar({ length: 120 }).notNull(),
   phone: varchar({ length: 20 }),
+  avatarFileId: uuid().references(() => files.id, { onDelete: 'set null' }),
+  emailNotifications: boolean().notNull().default(true),
   bio: varchar({ length: 1000 }),
   city: varchar({ length: 100 }),
   state: varchar({ length: 2 }),
@@ -220,8 +244,14 @@ export const notifications = pgTable('notifications', {
   title: varchar({ length: 160 }).notNull(),
   link: varchar({ length: 255 }),
   readAt: timestamp(tz),
+  emailClaimedAt: timestamp(tz),
+  emailSentAt: timestamp(tz),
+  emailAttempts: integer().notNull().default(0),
   createdAt: createdAt(),
-}, (t) => [index('notifications_user_idx').on(t.userId, t.readAt)]);
+}, (t) => [
+  index('notifications_user_idx').on(t.userId, t.readAt),
+  index('notifications_email_queue_idx').on(t.createdAt).where(sql`${t.emailClaimedAt} is null`),
+]);
 
 /* Planos, assinaturas e cortesias */
 export const plans = pgTable('plans', {

@@ -5,6 +5,7 @@ import { and, asc, desc, eq, isNull, ne, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { sendMessageSchema, type SendMessageInput } from '@ergatis/shared';
 import { InjectDb } from '../common/db.module';
+import { Audit } from '../audit/audit.interceptor';
 import { UserId } from '../common/user-id.decorator';
 import { ZodPipe } from '../common/zod.pipe';
 import type { Db } from '../db/client';
@@ -74,7 +75,7 @@ class MessagingController {
   @Get(':id/messages')
   messages(@UserId() userId: string, @Param('id', ParseUUIDPipe) id: string) { return this.service.messages(userId, id); }
 
-  @Post(':id/messages')
+  @Post(':id/messages') @Audit('message.sent', 'conversation', { targetParam: 'id' })
   send(
     @UserId() userId: string,
     @Param('id', ParseUUIDPipe) id: string,

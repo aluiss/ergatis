@@ -1,5 +1,6 @@
 'use client';
 
+import { LEGAL_VERSION } from '@ergatis/shared';
 import Link from 'next/link';
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -18,6 +19,7 @@ export default function Register() {
     const email = String(form.get('email'));
     const { error } = await authClient.signUp.email({
       name: String(form.get('name')), email, password: String(form.get('password')), callbackURL: '/painel',
+      termsVersion: LEGAL_VERSION,
     });
     setPending(false);
     if (error) { toast.error(error.message ?? 'Não foi possível criar a conta.'); return; }
@@ -41,6 +43,10 @@ export default function Register() {
           <div className="space-y-1"><Label htmlFor="name">Nome completo</Label><Input id="name" name="name" autoComplete="name" minLength={2} required /></div>
           <div className="space-y-1"><Label htmlFor="email">E-mail</Label><Input id="email" name="email" type="email" autoComplete="email" required /></div>
           <div className="space-y-1"><Label htmlFor="password">Senha (mínimo de 8 caracteres)</Label><Input id="password" name="password" type="password" autoComplete="new-password" minLength={8} required /></div>
+          <label className="flex items-start gap-2 text-sm">
+            <input type="checkbox" name="accept" className="mt-0.5" required />
+            <span>Tenho 18 anos ou mais e aceito os <Link className="text-primary" href="/termos" target="_blank">Termos de Uso</Link> e a <Link className="text-primary" href="/privacidade" target="_blank">Política de Privacidade</Link>.</span>
+          </label>
           <Button className="w-full" disabled={pending}>{pending ? 'Criando...' : 'Criar conta'}</Button>
         </form>
         <p className="mt-4 text-sm">Já tem conta? <Link className="text-primary" href="/entrar">Entrar</Link></p>

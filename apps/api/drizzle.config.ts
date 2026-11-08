@@ -7,5 +7,5 @@ export default defineConfig({
   schema: './src/db/schema.ts',
   out: './src/db/migrations',
   casing: 'snake_case',
-  dbCredentials: { url: process.env.DATABASE_URL ?? 'postgres://ergatis:ergatis@localhost:5432/ergatis' },
+  dbCredentials: { url: process.env.DATABASE_URL ?? 'postgres://ergatis:ergatis@localhost:5434/ergatis' },
 });

@@ -1,3 +1,4 @@
+import { LEGAL_VERSION } from '@ergatis/shared';
 import type { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -211,7 +212,7 @@ describe('admin e cortesias', () => {
     expect((await api(app, admin).delete(`/admin/grants/${grant.body.id}`)).status).toBe(200);
     expect((await api(app, pro).get('/billing/me')).body.plan).toBe('basic');
 
-    const logs = (await api(app, admin).get('/admin/audit-logs')).body;
+    const logs = (await api(app, admin).get(`/admin/audit-logs?targetId=${pro.id}&action=grant.`)).body.items;
     const actions = logs.map((l: { action: string }) => l.action);
     expect(actions).toEqual(expect.arrayContaining(['grant.created', 'grant.revoked']));
   });
@@ -256,7 +257,7 @@ describe('escalada de privilégio', () => {
     const origin = 'http://localhost:3000';
     const server = app.getHttpServer();
     const signup = await request(server).post('/api/auth/sign-up/email').set('Origin', origin)
-      .send({ name: 'Evil', email: 'evil-role@teste.dev', password: 'senha-forte-123', role: 'admin' });
+      .send({ name: 'Evil', email: 'evil-role@teste.dev', password: 'senha-forte-123', termsVersion: LEGAL_VERSION, role: 'admin' });
     expect(signup.status).toBe(400);
 
     const actor = await signUp(app);

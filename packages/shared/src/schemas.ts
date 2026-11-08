@@ -12,6 +12,7 @@ export const updateProfileSchema = z.object({
   state: z.string().trim().length(2).toUpperCase().optional(),
   latitude: latitude.optional(),
   longitude: longitude.optional(),
+  emailNotifications: z.boolean().optional(),
 });
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
 
@@ -86,6 +87,12 @@ export const grantSchema = z.object({
   message: 'Informe um plano ou benefícios específicos',
 });
 export type GrantInput = z.infer<typeof grantSchema>;
+
+export const uploadFileSchema = z.object({
+  kind: z.enum(['avatar', 'portfolio', 'verification_document']),
+  caption: z.string().trim().max(140).optional(),
+});
+export type UploadFileInput = z.infer<typeof uploadFileSchema>;
 
 export const subscribeSchema = z.object({
   planCode: z.enum(['pro', 'premium']),

@@ -27,6 +27,8 @@ export function SiteFooter() {
         <nav className="flex gap-4">
           <Link href="/profissionais">Profissionais</Link>
           <Link href="/planos">Planos</Link>
+          <Link href="/termos">Termos</Link>
+          <Link href="/privacidade">Privacidade</Link>
         </nav>
       </div>
     </footer>

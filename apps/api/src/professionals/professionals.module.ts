@@ -4,6 +4,7 @@ import {
   professionalSetupSchema, searchProfessionalsSchema,
   type ProfessionalSetupInput, type SearchProfessionalsInput,
 } from '@ergatis/shared';
+import { Audit } from '../audit/audit.interceptor';
 import { UserId } from '../common/user-id.decorator';
 import { ZodPipe } from '../common/zod.pipe';
 import { ProfessionalsService } from './professionals.service';
@@ -17,12 +18,12 @@ class ProfessionalsController {
     return this.service.search(query);
   }
 
-  @Put('me')
+  @Put('me') @Audit('professional.profile_updated', 'user', { targetSelf: true })
   setup(@UserId() userId: string, @Body(new ZodPipe(professionalSetupSchema)) body: ProfessionalSetupInput) {
     return this.service.setup(userId, body);
   }
 
-  @Post('me/verification')
+  @Post('me/verification') @Audit('professional.verification_requested', 'user', { targetSelf: true })
   verification(@UserId() userId: string) { return this.service.requestVerification(userId); }
 
   @AllowAnonymous() @Get(':id')

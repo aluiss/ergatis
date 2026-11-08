@@ -1,7 +1,8 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { ErrorState, Loading, post, useAction } from '@/components/app-ui';
+import { ErrorState, Loading, useAction } from '@/components/app-ui';
+import { AvatarCard, PortfolioCard, VerificationCard } from '@/components/profile-files';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -12,10 +13,9 @@ import { authClient } from '@/lib/auth-client';
 
 interface Category { id: string; name: string; parentId: string | null }
 interface Me {
-  profile: { displayName: string; phone: string | null; bio: string | null; city: string | null; state: string | null };
+  profile: { displayName: string; avatarFileId: string | null; emailNotifications: boolean; phone: string | null; bio: string | null; city: string | null; state: string | null };
   professional: { headline: string; serviceRadiusKm: number; verification: string; categoryIds: string[] } | null;
 }
-const VERIFICATION: Record<string, string> = { none: 'Não solicitada', pending: 'Em análise', approved: 'Verificado', rejected: 'Recusada' };
 
 export default function Profile() {
   const me = useQuery({ queryKey: ['me'], queryFn: () => api<Me>('/me') });
@@ -25,6 +25,7 @@ export default function Profile() {
     const value = (k: string) => String(f.get(k) ?? '').trim() || undefined;
     return api('/me', { method: 'PATCH', body: {
       displayName: value('displayName'), phone: value('phone'), bio: value('bio'), city: value('city'), state: value('state'),
+      emailNotifications: f.get('emailNotifications') === 'on',
     } });
   }, { invalidate: ['me'], success: 'Perfil salvo.' });
 
@@ -32,7 +33,6 @@ export default function Profile() {
     headline: f.get('headline'), serviceRadiusKm: Number(f.get('radius')), categoryIds: f.getAll('categoryIds'),
   } }), { invalidate: ['me'], success: 'Perfil profissional salvo.' });
 
-  const verify = useAction(() => post('/professionals/me/verification'), { invalidate: ['me'], success: 'Verificação solicitada.' });
   const remove = useAction(async () => {
     await api('/me', { method: 'DELETE' });
     await authClient.signOut().catch(() => undefined);
@@ -55,6 +55,7 @@ export default function Profile() {
   return (
     <div className="max-w-2xl space-y-6">
       <h1 className="text-2xl font-bold">Perfil</h1>
+      <AvatarCard fileId={p.avatarFileId} name={p.displayName} />
       <Card>
         <CardHeader><CardTitle>Dados pessoais</CardTitle></CardHeader>
         <CardContent>
@@ -66,6 +67,7 @@ export default function Profile() {
               <div className="space-y-1"><Label htmlFor="state">UF</Label><Input id="state" name="state" maxLength={2} defaultValue={p.state ?? ''} /></div>
             </div>
             <div className="space-y-1"><Label htmlFor="bio">Sobre você</Label><Textarea id="bio" name="bio" maxLength={1000} defaultValue={p.bio ?? ''} /></div>
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="emailNotifications" defaultChecked={p.emailNotifications} /> Receber avisos por e-mail</label>
             <Button disabled={save.isPending}>Salvar</Button>
           </form>
         </CardContent>
@@ -87,14 +89,11 @@ export default function Profile() {
             </fieldset>
             <Button disabled={setup.isPending}>{pro ? 'Atualizar' : 'Quero oferecer serviços'}</Button>
           </form>
-          {pro && (
-            <div className="mt-4 flex items-center justify-between gap-3 border-t pt-4 text-sm">
-              <span>Verificação: <b>{VERIFICATION[pro.verification]}</b></span>
-              {['none', 'rejected'].includes(pro.verification) && <Button size="sm" variant="outline" onClick={() => verify.mutate()}>Solicitar</Button>}
-            </div>
-          )}
         </CardContent>
       </Card>
+
+      {pro && <PortfolioCard />}
+      {pro && <VerificationCard status={pro.verification} />}
 
       <Card>
         <CardHeader><CardTitle>Privacidade</CardTitle></CardHeader>

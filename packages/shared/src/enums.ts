@@ -15,3 +15,6 @@ export type ReportStatus = (typeof REPORT_STATUSES)[number];
 
 export const VERIFICATION_STATUSES = ['none', 'pending', 'approved', 'rejected'] as const;
 export type VerificationStatus = (typeof VERIFICATION_STATUSES)[number];
+
+export const FILE_KINDS = ['avatar', 'portfolio', 'verification_document'] as const;
+export type FileKind = (typeof FILE_KINDS)[number];

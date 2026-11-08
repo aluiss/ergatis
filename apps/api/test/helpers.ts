@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { INestApplication } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
+import { LEGAL_VERSION } from '@ergatis/shared';
 import { eq } from 'drizzle-orm';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
@@ -24,7 +25,7 @@ export async function signUp(app: INestApplication, name = 'Pessoa Teste'): Prom
   const email = `${randomUUID()}@teste.dev`;
   const res = await request(app.getHttpServer()).post('/api/auth/sign-up/email')
     .set('Origin', 'http://localhost:3000')
-    .send({ name, email, password: 'senha-forte-123' });
+    .send({ name, email, password: 'senha-forte-123', termsVersion: LEGAL_VERSION });
   if (res.status !== 200) throw new Error(`sign-up ${res.status}: ${res.text}`);
   const cookie = (res.headers['set-cookie'] as unknown as string[]).map((c) => c.split(';')[0]).join('; ');
   return { id: res.body.user.id, cookie, email };

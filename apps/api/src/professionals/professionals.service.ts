@@ -1,10 +1,10 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { and, avg, count, desc, eq, sql, type SQL } from 'drizzle-orm';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { and, asc, avg, count, desc, eq, sql, type SQL } from 'drizzle-orm';
 import type { ProfessionalSetupInput, SearchProfessionalsInput } from '@ergatis/shared';
 import { InjectDb } from '../common/db.module';
 import type { Db } from '../db/client';
 import {
-  engagements, professionalCategories, professionals, profiles, reviews, serviceRequests,
+  engagements, files, professionalCategories, professionals, profiles, reviews, serviceRequests,
 } from '../db/schema';
 import { entitlementFlagSql, EntitlementsService } from '../entitlements/entitlements.service';
 
@@ -34,6 +34,9 @@ export class ProfessionalsService {
     const [pro] = await this.db.select().from(professionals).where(eq(professionals.userId, userId));
     if (!pro) throw new NotFoundException('Crie seu perfil profissional primeiro');
     if (pro.verification === 'approved') throw new ConflictException('Perfil já verificado');
+    const [document] = await this.db.select({ id: files.id }).from(files)
+      .where(and(eq(files.ownerId, userId), eq(files.kind, 'verification_document')));
+    if (!document) throw new BadRequestException('Envie um documento antes de solicitar a verificação');
     await this.db.update(professionals).set({ verification: 'pending' }).where(eq(professionals.userId, userId));
     return { verification: 'pending' as const };
   }
@@ -44,6 +47,7 @@ export class ProfessionalsService {
       .select({
         userId: professionals.userId,
         displayName: profiles.displayName,
+        avatarFileId: profiles.avatarFileId,
         bio: profiles.bio,
         city: profiles.city,
         state: profiles.state,
@@ -79,8 +83,15 @@ export class ProfessionalsService {
           .orderBy(desc(engagements.completedAt)).limit(20)
       : null;
 
+    // O portfólio mostra trabalhos feitos, então segue a mesma regra do plano.
+    const portfolio = entitlements.showCompletedServices
+      ? await this.db.select({ id: files.id, caption: files.caption }).from(files)
+          .where(and(eq(files.ownerId, userId), eq(files.kind, 'portfolio'))).orderBy(asc(files.createdAt))
+      : null;
+
     return {
       ...row,
+      portfolio,
       badge: entitlements.badge,
       rating: { average: rating.average ? Number(rating.average) : null, total: rating.total },
       latestReviews,
@@ -116,6 +127,7 @@ export class ProfessionalsService {
       .select({
         userId: professionals.userId,
         displayName: profiles.displayName,
+        avatarFileId: profiles.avatarFileId,
         headline: professionals.headline,
         city: profiles.city,
         state: profiles.state,
