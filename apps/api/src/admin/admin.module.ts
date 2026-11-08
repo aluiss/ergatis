@@ -6,11 +6,11 @@ import { and, count, desc, eq, gte, ilike, inArray, isNull, like, lte, or, sql }
 import { alias } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
 import {
-  grantSchema, PLAN_CODES, REPORT_STATUSES, AUDIT_ACTIONS, AUDIT_GROUPS, USER_ROLES, auditActionLabel, type AuditActionKey, type AuditGroup, type AuditChange, type GrantInput,
+  grantSchema, PLAN_CODES, REPORT_STATUSES, AUDIT_ACTIONS, AUDIT_GROUPS, STAFF_ROLES, type AccessLevel, type AccessResource, SUBSCRIPTION_STATUSES, USER_ROLES, auditActionLabel, type AuditActionKey, type AuditGroup, type AuditChange, type GrantInput,
 } from '@ergatis/shared';
 import { InjectDb } from '../common/db.module';
 import { AccessService } from '../access/access.service';
-import { RequireAccess } from '../access/require-access';
+import { RequireAccess, RequireAccessBy } from '../access/require-access';
 import { SessionUser } from '../access/session-user.decorator';
 import { recordAudit } from '../audit/audit';
 import { VerificationService } from '../verification/verification.service';
@@ -31,6 +31,16 @@ const listSchema = z.object({
   q: z.string().trim().max(120).optional(),
   page: z.coerce.number().int().min(1).default(1),
 });
+const userListSchema = listSchema.extend({
+  /** `staff` = qualquer papel de equipe. */
+  role: z.enum([...USER_ROLES, 'staff']).optional(),
+  status: z.enum(['active', 'banned']).optional(),
+});
+const subscriptionListSchema = listSchema.extend({ status: z.enum(SUBSCRIPTION_STATUSES).optional() });
+/** `pending` = abertas ou em análise: a fila de trabalho. */
+const reportListSchema = listSchema.extend({ status: z.enum([...REPORT_STATUSES, 'pending']).optional() });
+/** Busca por trecho; `%` e `_` digitados valem como texto, não como curinga. */
+const contains = (q: string) => `%${q.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
 const auditFilterSchema = z.object({
   /** Ação exata ("auth.signed_in") ou prefixo terminado em ponto ("auth."). */
   action: z.string().trim().max(80).regex(/^[a-z_.]*$/).optional(),
@@ -81,6 +91,28 @@ const verificationSchema = z.object({ approved: z.boolean() });
 
 const PAGE_SIZE = 25;
 
+/**
+ * Quem lê a linha do tempo de cada tipo de registro. Como no Workspace: o histórico
+ * de um registro é informação de quem cuida dele, não só de quem vê a auditoria toda.
+ */
+const HISTORY_ACCESS: Record<string, AccessResource> = {
+  user: 'admin.users',
+  report: 'admin.reports',
+  subscription: 'admin.subscriptions',
+  plan: 'admin.plans',
+  // Pedidos, propostas e conversas entram em investigação de denúncias.
+  service_request: 'admin.reports',
+  proposal: 'admin.reports',
+  engagement: 'admin.reports',
+  conversation: 'admin.reports',
+  face_check: 'documents.view',
+};
+const historyAccess = (req: { params: Record<string, string | string[]> }) => {
+  const resource = HISTORY_ACCESS[String(req.params.type)];
+  return resource ? { resource, level: (resource === 'documents.view' ? 'edit' : 'view') as AccessLevel } : null;
+};
+const ORIGIN_FIELDS = ['ip', 'userAgent', 'method', 'route'];
+
 @Injectable()
 class AdminService {
   constructor(
@@ -89,6 +121,7 @@ class AdminService {
     private readonly notifications: NotificationsService,
     private readonly files: FilesService,
     private readonly verification: VerificationService,
+    private readonly access: AccessService,
   ) {}
 
   /** Grava na mesma transação da ação: ou as duas acontecem, ou nenhuma. */
@@ -114,8 +147,12 @@ class AdminService {
     return { users, pros, open, completed, paying, mrrCents: mrr, openReports, pendingVerifications };
   }
 
-  async users({ q, page }: z.infer<typeof listSchema>) {
-    const where = q ? or(ilike(user.email, `%${q}%`), ilike(user.name, `%${q}%`)) : undefined;
+  async users({ q, page, role, status }: z.infer<typeof userListSchema>) {
+    const where = and(
+      q ? or(ilike(user.email, contains(q)), ilike(user.name, contains(q))) : undefined,
+      role === 'staff' ? inArray(user.role, [...STAFF_ROLES]) : role ? eq(user.role, role) : undefined,
+      status === 'banned' ? eq(user.banned, true) : status === 'active' ? or(isNull(user.banned), eq(user.banned, false)) : undefined,
+    );
     const items = await this.db
       .select({
         id: user.id, name: user.name, email: user.email, role: user.role,
@@ -207,21 +244,44 @@ class AdminService {
     });
   }
 
-  subscriptions(page: number) {
-    return this.db
+  async subscriptions({ q, page, status }: z.infer<typeof subscriptionListSchema>) {
+    const where = and(
+      status ? eq(subscriptions.status, status) : undefined,
+      q ? or(ilike(user.email, contains(q)), ilike(user.name, contains(q))) : undefined,
+    );
+    const items = await this.db
       .select({
         id: subscriptions.id, planCode: subscriptions.planCode, status: subscriptions.status,
         provider: subscriptions.provider, currentPeriodEnd: subscriptions.currentPeriodEnd,
         cancelledAt: subscriptions.cancelledAt, createdAt: subscriptions.createdAt,
         userId: user.id, userName: user.name, userEmail: user.email,
       })
-      .from(subscriptions).innerJoin(user, eq(user.id, subscriptions.userId))
+      .from(subscriptions).innerJoin(user, eq(user.id, subscriptions.userId)).where(where)
       .orderBy(desc(subscriptions.createdAt)).limit(PAGE_SIZE).offset((page - 1) * PAGE_SIZE);
+    const [{ total }] = await this.db.select({ total: count() }).from(subscriptions)
+      .innerJoin(user, eq(user.id, subscriptions.userId)).where(where);
+    return { items, total, page, pageSize: PAGE_SIZE };
   }
 
-  reports(page: number) {
-    return this.db.select().from(reports).orderBy(desc(reports.createdAt))
-      .limit(PAGE_SIZE).offset((page - 1) * PAGE_SIZE);
+  /** Com quem denunciou e quem foi denunciado, para a moderação não abrir cada um. */
+  async reports({ q, page, status }: z.infer<typeof reportListSchema>) {
+    const reporter = alias(user, 'reporter');
+    const target = alias(user, 'reported');
+    const where = and(
+      status === 'pending' ? inArray(reports.status, ['open', 'reviewing']) : status ? eq(reports.status, status) : undefined,
+      q ? or(ilike(reports.reason, contains(q)), ilike(target.name, contains(q)), ilike(target.email, contains(q)), ilike(reporter.name, contains(q))) : undefined,
+    );
+    const base = () => this.db.select({
+      id: reports.id, reason: reports.reason, status: reports.status, resolution: reports.resolution, createdAt: reports.createdAt,
+      targetUserId: reports.targetUserId, targetName: target.name, targetEmail: target.email,
+      reporterId: reports.reporterId, reporterName: reporter.name,
+      // Reincidência: quantas denúncias a mesma pessoa já recebeu.
+      targetReports: sql<number>`(select count(*)::int from reports r2 where r2.target_user_id = ${reports.targetUserId})`,
+    }).from(reports).innerJoin(target, eq(target.id, reports.targetUserId)).innerJoin(reporter, eq(reporter.id, reports.reporterId));
+    const items = await base().where(where).orderBy(desc(reports.createdAt)).limit(PAGE_SIZE).offset((page - 1) * PAGE_SIZE);
+    const [{ total }] = await this.db.select({ total: count() }).from(reports)
+      .innerJoin(target, eq(target.id, reports.targetUserId)).innerJoin(reporter, eq(reporter.id, reports.reporterId)).where(where);
+    return { items, total, page, pageSize: PAGE_SIZE };
   }
 
   async resolveReport(actorId: string, id: string, input: z.infer<typeof reportSchema>) {
@@ -234,15 +294,23 @@ class AdminService {
     });
   }
 
-  async pendingVerifications() {
-    const pending = await this.db.select({ userId: professionals.userId, headline: professionals.headline, name: user.name, email: user.email })
-      .from(professionals).innerJoin(user, eq(user.id, professionals.userId))
-      .where(eq(professionals.verification, 'pending')).limit(100);
+  async pendingVerifications({ q, page }: z.infer<typeof listSchema>) {
+    const where = and(
+      eq(professionals.verification, 'pending'),
+      q ? or(ilike(user.email, contains(q)), ilike(user.name, contains(q))) : undefined,
+    );
+    // Mais antigas primeiro: é uma fila.
+    const pending = await this.db.select({
+      userId: professionals.userId, headline: professionals.headline, name: user.name, email: user.email, requestedAt: professionals.updatedAt,
+    }).from(professionals).innerJoin(user, eq(user.id, professionals.userId)).where(where)
+      .orderBy(professionals.updatedAt).limit(PAGE_SIZE).offset((page - 1) * PAGE_SIZE);
+    const [{ total }] = await this.db.select({ total: count() }).from(professionals).innerJoin(user, eq(user.id, professionals.userId)).where(where);
     const documents = pending.length === 0 ? [] : await this.db
       .select({ id: files.id, ownerId: files.ownerId, mimeType: files.mimeType }).from(files)
       .where(and(eq(files.kind, 'verification_document'), inArray(files.ownerId, pending.map((p) => p.userId))));
     const face = await this.verification.reviewData(pending.map((p) => p.userId));
-    return pending.map((p) => ({ ...p, documents: documents.filter((d) => d.ownerId === p.userId), face: face.get(p.userId) ?? null }));
+    const items = pending.map((p) => ({ ...p, documents: documents.filter((d) => d.ownerId === p.userId), face: face.get(p.userId) ?? null }));
+    return { items, total, page, pageSize: PAGE_SIZE };
   }
 
   async decideVerification(actorId: string, id: string, approved: boolean) {
@@ -277,9 +345,9 @@ class AdminService {
       f.from ? gte(auditLogs.createdAt, new Date(f.from)) : undefined,
       f.to ? lte(auditLogs.createdAt, endOfDay(f.to)) : undefined,
       f.q ? or(
-        ilike(actor.email, `%${f.q}%`), ilike(actor.name, `%${f.q}%`),
-        ilike(target.email, `%${f.q}%`), ilike(target.name, `%${f.q}%`),
-        ilike(auditLogs.summary, `%${f.q}%`),
+        ilike(actor.email, contains(f.q)), ilike(actor.name, contains(f.q)),
+        ilike(target.email, contains(f.q)), ilike(target.name, contains(f.q)),
+        ilike(auditLogs.summary, contains(f.q)),
       ) : undefined,
     );
     const select = () => this.db.select().from(auditLogs)
@@ -295,6 +363,22 @@ class AdminService {
       ...r.audit_logs, actor: person(r.actor), targetUser: person(r.target),
     });
     return { select, total, toView };
+  }
+
+  /**
+   * Linha do tempo de um registro. Para usuário: o que a pessoa fez e o que fizeram com ela.
+   * Sem acesso à auditoria, a origem técnica (IP, navegador, rota) não aparece.
+   */
+  async history(viewer: { id: string; role: string | null }, type: string, id: string, page: number) {
+    const q = this.auditQuery(type === 'user' ? { userId: id } : { targetType: type, targetId: id });
+    const rows = await q.select().orderBy(desc(auditLogs.createdAt)).limit(PAGE_SIZE).offset((page - 1) * PAGE_SIZE);
+    const [{ total }] = await q.total();
+    const seesOrigin = await this.access.can(viewer, 'admin.audit');
+    const items = rows.map(q.toView).map((r) => (seesOrigin || !r.metadata ? r : {
+      ...r,
+      metadata: Object.fromEntries(Object.entries(r.metadata as Record<string, unknown>).filter(([k]) => !ORIGIN_FIELDS.includes(k))),
+    }));
+    return { items, total, page, pageSize: PAGE_SIZE };
   }
 
   async auditLogs({ page, ...filter }: z.infer<typeof auditListSchema>) {
@@ -333,7 +417,7 @@ class AdminController {
   constructor(private readonly service: AdminService, private readonly access: AccessService) {}
 
   @Get('metrics') @RequireAccess('admin.overview') metrics() { return this.service.metrics(); }
-  @Get('users') @RequireAccess('admin.users') users(@Query(new ZodPipe(listSchema)) q: z.infer<typeof listSchema>) { return this.service.users(q); }
+  @Get('users') @RequireAccess('admin.users') users(@Query(new ZodPipe(userListSchema)) q: z.infer<typeof userListSchema>) { return this.service.users(q); }
   @Get('users/:id') @RequireAccess('admin.users') user(@Param('id', ParseUUIDPipe) id: string) { return this.service.userDetail(id); }
 
   @Post('users/:id/ban') @RequireAccess('admin.users', 'edit')
@@ -365,22 +449,29 @@ class AdminController {
   ) { return this.service.updatePlan(a, code, b); }
 
   @Get('subscriptions') @RequireAccess('admin.subscriptions')
-  subscriptions(@Query(new ZodPipe(listSchema)) q: z.infer<typeof listSchema>) { return this.service.subscriptions(q.page); }
+  subscriptions(@Query(new ZodPipe(subscriptionListSchema)) q: z.infer<typeof subscriptionListSchema>) { return this.service.subscriptions(q); }
 
   @Get('reports') @RequireAccess('admin.reports')
-  reports(@Query(new ZodPipe(listSchema)) q: z.infer<typeof listSchema>) { return this.service.reports(q.page); }
+  reports(@Query(new ZodPipe(reportListSchema)) q: z.infer<typeof reportListSchema>) { return this.service.reports(q); }
 
   @Patch('reports/:id') @RequireAccess('admin.reports', 'edit')
   resolve(@UserId() a: string, @Param('id', ParseUUIDPipe) id: string, @Body(new ZodPipe(reportSchema)) b: z.infer<typeof reportSchema>) {
     return this.service.resolveReport(a, id, b);
   }
 
-  @Get('verifications') @RequireAccess('admin.verifications') verifications() { return this.service.pendingVerifications(); }
+  @Get('verifications') @RequireAccess('admin.verifications')
+  verifications(@Query(new ZodPipe(listSchema)) q: z.infer<typeof listSchema>) { return this.service.pendingVerifications(q); }
 
   @Post('verifications/:id') @RequireAccess('admin.verifications', 'edit')
   decide(@UserId() a: string, @Param('id', ParseUUIDPipe) id: string, @Body(new ZodPipe(verificationSchema)) b: z.infer<typeof verificationSchema>) {
     return this.service.decideVerification(a, id, b.approved);
   }
+
+  @Get('history/:type/:id') @RequireAccessBy(historyAccess)
+  history(
+    @SessionUser() viewer: { id: string; role: string | null }, @Param('type') type: string,
+    @Param('id') id: string, @Query(new ZodPipe(listSchema)) q: z.infer<typeof listSchema>,
+  ) { return this.service.history(viewer, type, id.slice(0, 80), q.page); }
 
   @Get('audit-logs') @RequireAccess('admin.audit')
   audit(@Query(new ZodPipe(auditListSchema)) q: z.infer<typeof auditListSchema>) { return this.service.auditLogs(q); }

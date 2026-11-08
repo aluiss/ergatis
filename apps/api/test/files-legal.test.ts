@@ -180,7 +180,7 @@ describe('verificação com documento', () => {
     expect(own.headers['cache-control']).toContain('no-store');
     expect(own.headers['content-disposition']).toContain('attachment');
 
-    const queue = (await api(app, admin).get('/admin/verifications')).body;
+    const queue = (await api(app, admin).get('/admin/verifications')).body.items;
     const item = queue.find((v: { userId: string }) => v.userId === pro.id);
     expect(item.documents).toHaveLength(1);
     expect(item.face).toMatchObject({ livenessScore: 0.98 });

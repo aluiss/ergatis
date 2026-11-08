@@ -1,48 +1,64 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { ChevronRight } from 'lucide-react';
 import Link from 'next/link';
-import { useState } from 'react';
-import { ErrorState, Loading } from '@/components/app-ui';
+import { Suspense } from 'react';
+import { isStaffRole, ROLE_LABELS, type UserRole } from '@ergatis/shared';
+import { Empty, ErrorState, Loading } from '@/components/app-ui';
+import { FilterChips, Pager, SearchBar } from '@/components/list-ui';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { isStaffRole, ROLE_LABELS } from '@ergatis/shared';
+import { useListParams } from '@/hooks/use-list-params';
 import { api } from '@/lib/api';
+import { date } from '@/lib/format';
 
-interface Result { items: { id: string; name: string; email: string; role: string; banned: boolean }[]; total: number; pageSize: number }
+interface User { id: string; name: string; email: string; role: UserRole | null; banned: boolean | null; createdAt: string }
+interface Result { items: User[]; total: number; pageSize: number }
 
-export default function Users() {
-  const [q, setQ] = useState('');
-  const [page, setPage] = useState(1);
+function Users() {
+  const { values, page, set, query } = useListParams(['q', 'role', 'status'] as const);
   const list = useQuery({
-    queryKey: ['admin-users', q, page],
-    queryFn: () => api<Result>(`/admin/users?${new URLSearchParams({ q, page: String(page) })}`),
+    queryKey: ['admin-users', query()],
+    queryFn: () => api<Result>(`/admin/users?${query()}`),
+    placeholderData: keepPreviousData,
   });
+
   return (
     <div className="space-y-4">
-      <form onSubmit={(e) => { e.preventDefault(); setPage(1); setQ(String(new FormData(e.currentTarget).get('q'))); }} className="flex max-w-md gap-2">
-        <Input name="q" placeholder="Nome ou e-mail" aria-label="Buscar usuários" /><Button>Buscar</Button>
-      </form>
-      {list.isPending ? <Loading /> : list.error ? <ErrorState error={list.error} /> : (
+      <h1 className="text-2xl font-bold">Usuários</h1>
+      <SearchBar value={values.q} onSearch={(q) => set({ q })} placeholder="Nome ou e-mail" />
+      <FilterChips label="Papel" value={values.role} onChange={(role) => set({ role })}
+        options={[['', 'Todos'], ['staff', 'Equipe'], ['user', 'Usuários comuns']] as const} />
+      <FilterChips label="Situação" value={values.status} onChange={(status) => set({ status })}
+        options={[['', 'Qualquer situação'], ['active', 'Ativos'], ['banned', 'Banidos']] as const} />
+
+      {list.isPending ? <Loading /> : list.error ? <ErrorState error={list.error} /> : list.data.items.length === 0 ? (
+        <Empty>Nenhum usuário com esses filtros.</Empty>
+      ) : (
         <>
-          <ul className="divide-y rounded-lg border">
+          <ul className={`divide-y rounded-lg border ${list.isPlaceholderData ? 'opacity-60' : ''}`}>
             {list.data.items.map((u) => (
               <li key={u.id}>
-                <Link href={`/admin/usuarios/${u.id}`} className="hover:bg-muted flex items-center justify-between gap-3 p-3 text-sm">
-                  <span><b>{u.name}</b><span className="text-muted-foreground block">{u.email}</span></span>
-                  <span className="flex gap-1">{isStaffRole(u.role) && <Badge>{ROLE_LABELS[u.role]}</Badge>}{u.banned && <Badge variant="destructive">Banido</Badge>}</span>
+                <Link href={`/admin/usuarios/${u.id}`} className="hover:bg-muted flex min-h-16 items-center gap-3 p-3 text-sm">
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">{u.name}</span>
+                    <span className="text-muted-foreground block truncate">{u.email}</span>
+                    <span className="text-muted-foreground block text-xs">Desde {date(u.createdAt)}</span>
+                  </span>
+                  <span className="flex shrink-0 flex-col items-end gap-1">
+                    {isStaffRole(u.role) && <Badge>{ROLE_LABELS[u.role]}</Badge>}
+                    {u.banned && <Badge variant="destructive">Banido</Badge>}
+                  </span>
+                  <ChevronRight className="text-muted-foreground size-4 shrink-0" aria-hidden />
                 </Link>
               </li>
             ))}
           </ul>
-          <div className="flex items-center gap-3 text-sm">
-            <Button size="sm" variant="outline" disabled={page === 1} onClick={() => setPage(page - 1)}>Anterior</Button>
-            <span>Página {page} de {Math.max(1, Math.ceil(list.data.total / list.data.pageSize))}</span>
-            <Button size="sm" variant="outline" disabled={page * list.data.pageSize >= list.data.total} onClick={() => setPage(page + 1)}>Próxima</Button>
-          </div>
+          <Pager page={page} total={list.data.total} pageSize={list.data.pageSize} onPage={(p) => set({ page: String(p) })} noun={['usuário', 'usuários']} />
         </>
       )}
     </div>
   );
 }
+
+export default function UsersPage() { return <Suspense fallback={<Loading />}><Users /></Suspense>; }

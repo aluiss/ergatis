@@ -1,6 +1,11 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { Suspense } from 'react';
+import { HistoryButton } from '@/components/audit';
+import { Pager, SearchBar } from '@/components/list-ui';
+import { useListParams } from '@/hooks/use-list-params';
+import { date } from '@/lib/format';
 import { Empty, ErrorState, Loading, pendingFor, post, useAction } from '@/components/app-ui';
 import { ConfirmAction } from '@/components/confirm-action';
 import { useAccess } from '@/components/access-provider';
@@ -8,7 +13,8 @@ import { Button } from '@/components/ui/button';
 import { api } from '@/lib/api';
 
 interface Face { livenessScore: number | null; documentMatchScore: number | null; capturedAt: string | null; selfieFileId: string | null }
-interface Item { userId: string; name: string; email: string; headline: string; documents: { id: string }[]; face: Face | null }
+interface Item { userId: string; name: string; email: string; headline: string; requestedAt: string; documents: { id: string }[]; face: Face | null }
+interface Result { items: Item[]; total: number; pageSize: number }
 
 const pct = (n: number | null) => (n === null ? '—' : `${Math.round(n * 100)}%`);
 /** Cor da nota: o limiar padrão da API é 90%. Abaixo disso, a moderação olha com mais cuidado. */
@@ -32,26 +38,35 @@ function FaceSummary({ face, canSee, name }: { face: Face | null; canSee: boolea
   );
 }
 
-export default function AdminVerifications() {
+function Verifications() {
   const { can } = useAccess();
-  const q = useQuery({ queryKey: ['admin-verifications'], queryFn: () => api<Item[]>('/admin/verifications') });
+  const { values, page, set, query } = useListParams(['q'] as const);
+  const q = useQuery({
+    queryKey: ['admin-verifications', query()],
+    queryFn: () => api<Result>(`/admin/verifications?${query()}`),
+    placeholderData: keepPreviousData,
+  });
   const decide = useAction(({ id, approved }: { id: string; approved: boolean }) =>
     post(`/admin/verifications/${id}`, { approved }), { invalidate: ['admin-verifications'], success: 'Decisão registrada.' });
-  if (q.isPending) return <Loading />;
-  if (q.error) return <ErrorState error={q.error} />;
-  if (q.data.length === 0) return <Empty>Nenhuma verificação pendente.</Empty>;
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
+    <h1 className="text-2xl font-bold">Verificações</h1>
+    <SearchBar value={values.q} onSearch={(v) => set({ q: v })} placeholder="Nome ou e-mail" />
     <p className="text-muted-foreground text-sm">
       Compare a selfie com a foto do documento. As notas vêm do provedor de reconhecimento facial e apoiam, não substituem, a sua análise.
       Cada abertura de documento ou selfie fica na auditoria; tudo é apagado ao aprovar ou recusar. Apague cópias baixadas após a análise.
     </p>
-    <ul className="divide-y rounded-lg border text-sm">
-      {q.data.map((v) => (
+    {q.isPending ? <Loading /> : q.error ? <ErrorState error={q.error} /> : q.data.items.length === 0 ? (
+      <Empty>{values.q ? 'Ninguém com essa busca na fila.' : 'Nenhuma verificação pendente.'}</Empty>
+    ) : (<>
+    <ul className={`divide-y rounded-lg border text-sm ${q.isPlaceholderData ? 'opacity-60' : ''}`}>
+      {q.data.items.map((v) => (
         <li key={v.userId} className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
           <span>
             <b>{v.name}</b><span className="text-muted-foreground block">{v.email} · {v.headline}</span>
+            <span className="text-muted-foreground block text-xs">Pedido em {date(v.requestedAt)}</span>
             <span className="mt-2 block"><FaceSummary face={v.face} canSee={can('documents.view', 'edit')} name={v.name} /></span>
+            <span className="mt-1 block"><HistoryButton type="user" id={v.userId} title={v.name} /></span>
             <span className="mt-1 flex flex-wrap gap-3">
               {can('documents.view', 'edit')
                 ? v.documents.map((d, i) => <a key={d.id} className="text-primary" href={`/api/files/${d.id}`}>Baixar documento {i + 1}</a>)
@@ -79,6 +94,10 @@ export default function AdminVerifications() {
         </li>
       ))}
     </ul>
+    <Pager page={page} total={q.data.total} pageSize={q.data.pageSize} onPage={(p) => set({ page: String(p) })} noun={['pedido', 'pedidos']} />
+    </>)}
     </div>
   );
 }
+
+export default function AdminVerifications() { return <Suspense fallback={<Loading />}><Verifications /></Suspense>; }

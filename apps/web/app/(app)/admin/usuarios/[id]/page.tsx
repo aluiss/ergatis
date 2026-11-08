@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'next/navigation';
 import { ErrorState, Loading, pendingFor, post, StatusBadge, useAction } from '@/components/app-ui';
-import { AuditHistory } from '@/components/audit';
+import { RecordHistory } from '@/components/audit';
 import { ConfirmAction } from '@/components/confirm-action';
 import { RoleControl } from '@/components/role-control';
 import { useAccess } from '@/components/access-provider';
@@ -114,7 +114,7 @@ export default function UserDetail() {
         </ul>
       </section>
 
-      {can('admin.audit') && <AuditHistory userId={id} />}
+      <RecordHistory type="user" id={id} auditLink={can('admin.audit') ? `/admin/auditoria?userId=${id}` : undefined} />
 
       <section>
         <h2 className="mb-2 font-semibold">Assinaturas</h2>

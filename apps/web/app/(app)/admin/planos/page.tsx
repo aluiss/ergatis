@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { api } from '@/lib/api';
 import { useAccess } from '@/components/access-provider';
+import { HistoryButton } from '@/components/audit';
 
 interface Plan { code: string; name: string; priceCents: number; entitlements: Entitlements }
 const FLAGS = [
@@ -32,7 +33,10 @@ function PlanForm({ plan }: { plan: Plan }) {
 
   return (
     <Card>
-      <CardHeader><CardTitle className="capitalize">{plan.code}</CardTitle></CardHeader>
+      <CardHeader className="flex flex-row items-center justify-between gap-2">
+        <CardTitle className="capitalize">{plan.code}</CardTitle>
+        <HistoryButton type="plan" id={plan.code} title={`Plano ${plan.name}`} />
+      </CardHeader>
       <CardContent>
         <form action={(f) => save.mutate(f)} className="space-y-3">
           {/* Só ver: o mesmo formulário, travado, para não haver duas telas. */}
@@ -57,6 +61,7 @@ export default function AdminPlans() {
   if (q.error) return <ErrorState error={q.error} />;
   return (
     <div className="space-y-3">
+      <h1 className="text-2xl font-bold">Planos</h1>
       <p className="text-muted-foreground text-sm">Novo preço vale para novas assinaturas. Assinaturas existentes mantêm o valor cobrado no gateway.</p>
       <div className="grid gap-4 lg:grid-cols-3">{q.data.map((p) => <PlanForm key={p.code} plan={p} />)}</div>
     </div>
