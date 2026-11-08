@@ -1,7 +1,7 @@
 'use client';
 
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { Download, RotateCcw, Search } from 'lucide-react';
+import { Download, RotateCcw, Search, SlidersHorizontal } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useState } from 'react';
@@ -30,6 +30,7 @@ function AuditPage() {
   const router = useRouter();
   const pathname = usePathname();
   const [selected, setSelected] = useState<AuditEntry | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
 
   const filters = Object.fromEntries(FILTER_KEYS.map((k) => [k, params.get(k) ?? ''])) as Record<(typeof FILTER_KEYS)[number], string>;
   const page = Number(params.get('page') ?? '1') || 1;
@@ -50,6 +51,7 @@ function AuditPage() {
   });
 
   const hasFilters = query.toString() !== '';
+  const activeFilters = (['group', 'action', 'from', 'to'] as const).filter((k) => filters[k]).length;
   const pages = list.data ? Math.max(1, Math.ceil(list.data.total / list.data.pageSize)) : 1;
   const scoped = filters.userId || filters.requestId || filters.targetId;
 
@@ -73,6 +75,11 @@ function AuditPage() {
             <Input id="audit-q" name="q" key={filters.q} defaultValue={filters.q} className="pl-8" placeholder="Pessoa, e-mail ou descrição" />
           </div>
         </div>
+        {/* No celular, os filtros secundários ficam recolhidos para a lista aparecer logo. */}
+        <Button type="button" variant="outline" className="lg:hidden" onClick={() => setShowFilters((v) => !v)} aria-expanded={showFilters}>
+          <SlidersHorizontal /> Filtros{activeFilters ? ` (${activeFilters})` : ''}
+        </Button>
+        <div className={showFilters ? 'contents' : 'hidden lg:contents'}>
         <div className="space-y-1">
           <Label htmlFor="audit-group">Área</Label>
           <Select id="audit-group" value={filters.group} onChange={(e) => setParams({ group: e.target.value, action: '' })}>
@@ -99,8 +106,9 @@ function AuditPage() {
           <Label htmlFor="audit-to">Até</Label>
           <Input id="audit-to" type="date" value={filters.to} min={filters.from || undefined} onChange={(e) => setParams({ to: e.target.value })} />
         </div>
+        </div>
         <div className="flex items-end gap-2">
-          <Button type="submit">Filtrar</Button>
+          <Button type="submit" className="flex-1 lg:flex-none">Filtrar</Button>
           {hasFilters && (
             <Button type="button" variant="ghost" onClick={() => router.replace(pathname)}><RotateCcw /> Limpar</Button>
           )}
@@ -118,7 +126,23 @@ function AuditPage() {
         <Empty>{hasFilters ? 'Nenhum registro para estes filtros.' : 'Nenhum registro ainda.'}</Empty>
       ) : (
         <>
-          <div className={`overflow-x-auto rounded-lg border ${list.isPlaceholderData ? 'opacity-60' : ''}`}>
+          {/* Celular: cartões. A tabela de cinco colunas não cabe em 390px. */}
+          <ul className={`divide-y rounded-lg border md:hidden ${list.isPlaceholderData ? 'opacity-60' : ''}`}>
+            {list.data.items.map((e) => (
+              <li key={e.id}>
+                <button type="button" onClick={() => setSelected(e)} className="hover:bg-muted/50 flex w-full flex-col gap-1.5 p-3 text-left text-sm">
+                  <span className="flex items-center justify-between gap-2">
+                    <AuditActionBadge action={e.action} />
+                    <time className="text-muted-foreground text-xs">{when(e.createdAt)}</time>
+                  </span>
+                  <span><span className="text-muted-foreground">Quem:</span> {personLabel(e.actor, e.actorRole)}</span>
+                  <span><span className="text-muted-foreground">Alvo:</span> {targetLabel(e)}</span>
+                  {e.summary && <span className="text-muted-foreground line-clamp-2">{e.summary}</span>}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className={`hidden overflow-x-auto rounded-lg border md:block ${list.isPlaceholderData ? 'opacity-60' : ''}`}>
             <table className="w-full text-sm">
               <thead className="bg-muted/50 text-muted-foreground text-left text-xs">
                 <tr>
@@ -149,12 +173,12 @@ function AuditPage() {
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
-            <div className="flex items-center gap-3">
+            <div className="flex w-full items-center justify-between gap-3 sm:w-auto sm:justify-start">
               <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setParams({ page: String(page - 1) }, false)}>Anterior</Button>
               <span>Página {page} de {pages} · {list.data.total} {list.data.total === 1 ? 'registro' : 'registros'}</span>
               <Button size="sm" variant="outline" disabled={page >= pages} onClick={() => setParams({ page: String(page + 1) }, false)}>Próxima</Button>
             </div>
-            <Button asChild size="sm" variant="outline">
+            <Button asChild size="sm" variant="outline" className="w-full sm:w-auto">
               {/* Download direto: o navegador manda o cookie de sessão; a exportação fica registrada. */}
               <a href={`/api/admin/audit-logs/export?${query}`} download><Download /> Exportar CSV</a>
             </Button>

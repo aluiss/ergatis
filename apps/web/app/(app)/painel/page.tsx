@@ -17,7 +17,7 @@ interface Notification { id: string; title: string; link: string | null; readAt:
 export default function Panel() {
   const me = useQuery({ queryKey: ['me'], queryFn: () => api<Me>('/me') });
   const notifications = useQuery({ queryKey: ['notifications'], queryFn: () => api<Notification[]>('/notifications') });
-  const read = useAction((id: string) => post(`/notifications/${id}/read`), { invalidate: ['notifications'] });
+  const read = useAction((id: string) => post(`/notifications/${id}/read`), { invalidate: ['notifications', 'unread'] });
 
   if (me.isPending) return <Loading />;
   if (me.error) return <ErrorState error={me.error} />;
@@ -25,7 +25,7 @@ export default function Panel() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Olá, {me.data.profile.displayName}</h1>
+      <h1 className="text-2xl font-bold">Olá, {me.data.profile.displayName.split(' ')[0]}</h1>
       <div className="grid gap-4 sm:grid-cols-2">
         <Card>
           <CardHeader><CardTitle>Preciso de um serviço</CardTitle></CardHeader>

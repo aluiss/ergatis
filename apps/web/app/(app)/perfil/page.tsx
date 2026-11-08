@@ -84,7 +84,7 @@ export default function Profile() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="perfil-profissional" className="scroll-mt-20">
         <CardHeader><CardTitle>Perfil profissional</CardTitle></CardHeader>
         <CardContent>
           <form action={(f) => setup.mutate(f)} className="space-y-3">

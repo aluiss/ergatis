@@ -26,3 +26,11 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   const data = (await res.json()) as { user?: SessionUser } | null;
   return data?.user ?? null;
 }
+
+/** GET autenticado no servidor, repassando o cookie da sessão. Devolve null se falhar. */
+export async function authedGet<T>(path: string): Promise<T | null> {
+  const cookie = (await cookies()).toString();
+  if (!cookie) return null;
+  const res = await fetch(`${base}/api${path}`, { headers: { cookie }, cache: 'no-store' });
+  return res.ok ? (res.json() as Promise<T>) : null;
+}
