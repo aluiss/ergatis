@@ -2,7 +2,8 @@
 
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
-import { Empty, ErrorState, Loading, StatusBadge, useAction } from '@/components/app-ui';
+import { Empty, ErrorState, Loading, pendingFor, StatusBadge, useAction } from '@/components/app-ui';
+import { ConfirmAction } from '@/components/confirm-action';
 import { Button } from '@/components/ui/button';
 import { api } from '@/lib/api';
 import { date } from '@/lib/format';
@@ -11,8 +12,8 @@ interface Item { id: string; targetUserId: string; reason: string; status: strin
 
 export default function AdminReports() {
   const q = useQuery({ queryKey: ['admin-reports'], queryFn: () => api<Item[]>('/admin/reports') });
-  const update = useAction(({ id, status }: { id: string; status: string }) =>
-    api(`/admin/reports/${id}`, { method: 'PATCH', body: { status } }), { invalidate: ['admin-reports'], success: 'Denúncia atualizada.' });
+  const update = useAction(({ id, status, resolution }: { id: string; status: string; resolution?: string }) =>
+    api(`/admin/reports/${id}`, { method: 'PATCH', body: { status, resolution } }), { invalidate: ['admin-reports'], success: 'Denúncia atualizada.' });
   if (q.isPending) return <Loading />;
   if (q.error) return <ErrorState error={q.error} />;
   if (q.data.length === 0) return <Empty>Nenhuma denúncia.</Empty>;
@@ -25,8 +26,24 @@ export default function AdminReports() {
           <p className="text-muted-foreground text-xs">{date(r.createdAt)}</p>
           {['open', 'reviewing'].includes(r.status) && (
             <div className="flex gap-2">
-              <Button size="sm" onClick={() => update.mutate({ id: r.id, status: 'resolved' })}>Resolver</Button>
-              <Button size="sm" variant="outline" onClick={() => update.mutate({ id: r.id, status: 'dismissed' })}>Arquivar</Button>
+              <ConfirmAction
+                title="Marcar a denúncia como resolvida?"
+                description="Registre o que foi feito. A anotação fica na auditoria e ajuda em casos futuros com a mesma pessoa."
+                confirmLabel="Resolver"
+                reason={{ label: 'O que foi feito', required: true, minLength: 3, placeholder: 'Ex.: usuário advertido; conta banida' }}
+                onConfirm={(resolution) => update.mutateAsync({ id: r.id, status: 'resolved', resolution })}
+              >
+                <Button size="sm" loading={pendingFor(update, (v) => v.id === r.id && v.status === 'resolved')} disabled={pendingFor(update, (v) => v.id === r.id)}>Resolver</Button>
+              </ConfirmAction>
+              <ConfirmAction
+                title="Arquivar a denúncia sem providência?"
+                description="Use quando ela não procede. Diga por quê: o motivo fica registrado."
+                confirmLabel="Arquivar"
+                reason={{ label: 'Por que não procede', required: true, minLength: 3 }}
+                onConfirm={(resolution) => update.mutateAsync({ id: r.id, status: 'dismissed', resolution })}
+              >
+                <Button size="sm" variant="outline" loading={pendingFor(update, (v) => v.id === r.id && v.status === 'dismissed')} disabled={pendingFor(update, (v) => v.id === r.id)}>Arquivar</Button>
+              </ConfirmAction>
             </div>
           )}
         </li>

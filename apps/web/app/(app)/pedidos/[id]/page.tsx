@@ -4,7 +4,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Crown, Lock, Star } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
-import { ErrorState, Loading, post, StatusBadge, useAction } from '@/components/app-ui';
+import { ErrorState, Loading, pendingFor, post, StatusBadge, useAction } from '@/components/app-ui';
+import { ConfirmAction } from '@/components/confirm-action';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -75,14 +76,39 @@ export default function RequestDetail() {
                 <p className="text-sm">{p.message}</p>
                 {p.status === 'sent' && r.status === 'open' ? (
                   <div className="flex gap-2">
-                    <Button size="sm" disabled={accept.isPending} onClick={() => accept.mutate(p.id)}>Contratar</Button>
-                    <Button size="sm" variant="outline" disabled={reject.isPending} onClick={() => reject.mutate(p.id)}>Recusar</Button>
+                    <ConfirmAction
+                      title={`Contratar ${p.displayName} por ${money(p.amountCents)}?`}
+                      description={r.proposals!.filter((o) => o.status === 'sent').length > 1
+                        ? 'As outras propostas deste pedido serão recusadas, e os profissionais, avisados. Vocês poderão conversar pelas mensagens.'
+                        : 'O pedido sai da lista de oportunidades. Vocês poderão conversar pelas mensagens.'}
+                      confirmLabel="Contratar"
+                      onConfirm={() => accept.mutateAsync(p.id)}
+                    >
+                      <Button size="sm" loading={pendingFor(accept, (v) => v === p.id)} disabled={accept.isPending}>Contratar</Button>
+                    </ConfirmAction>
+                    <ConfirmAction
+                      title={`Recusar a proposta de ${p.displayName}?`}
+                      description="O profissional será avisado. Não dá para reconsiderar depois."
+                      confirmLabel="Recusar proposta" destructive
+                      onConfirm={() => reject.mutateAsync(p.id)}
+                    >
+                      <Button size="sm" variant="outline" loading={pendingFor(reject, (v) => v === p.id)} disabled={accept.isPending}>Recusar</Button>
+                    </ConfirmAction>
                   </div>
                 ) : <StatusBadge status={p.status} />}
               </CardContent>
             </Card>
           ))}
-          {r.status === 'open' && <Button variant="outline" onClick={() => cancel.mutate()}>Cancelar pedido</Button>}
+          {r.status === 'open' && (
+            <ConfirmAction
+              title="Cancelar este pedido?"
+              description="Ele sai da lista de oportunidades, e quem enviou proposta será avisado. Para retomar, será preciso publicar outro pedido."
+              confirmLabel="Cancelar pedido" destructive
+              onConfirm={() => cancel.mutateAsync()}
+            >
+              <Button variant="outline" className="w-full sm:w-auto">Cancelar pedido</Button>
+            </ConfirmAction>
+          )}
         </section>
       ) : (
         <>
@@ -103,7 +129,7 @@ export default function RequestDetail() {
                 <form action={(f) => propose.mutate(f)} className="space-y-3">
                   <div className="space-y-1"><Label htmlFor="amount">Valor em R$</Label><Input id="amount" name="amount" inputMode="decimal" required /></div>
                   <div className="space-y-1"><Label htmlFor="message">Mensagem</Label><Textarea id="message" name="message" minLength={5} maxLength={1000} required /></div>
-                  <Button disabled={propose.isPending}>Enviar proposta</Button>
+                  <Button loading={propose.isPending} className="w-full sm:w-auto">Enviar proposta</Button>
                 </form>
               </CardContent>
             </Card>

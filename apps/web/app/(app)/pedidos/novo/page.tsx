@@ -51,7 +51,7 @@ export default function NewRequest() {
       </div>
       <div className="space-y-1"><Label htmlFor="budget">Orçamento estimado em R$ (opcional)</Label><Input id="budget" name="budget" inputMode="decimal" /></div>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="urgent" /> É urgente</label>
-      <Button disabled={create.isPending}>{create.isPending ? 'Publicando...' : 'Publicar pedido'}</Button>
+      <Button loading={create.isPending} className="w-full sm:w-auto">{create.isPending ? 'Publicando...' : 'Publicar pedido'}</Button>
     </form>
   );
 }

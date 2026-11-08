@@ -1,5 +1,6 @@
 import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
+import { Loader2 } from "lucide-react"
 import { Slot } from "radix-ui"
 
 import { cn } from "@/lib/utils"
@@ -38,15 +39,23 @@ const buttonVariants = cva(
   }
 )
 
+/**
+ * `loading`: mostra o indicador, desabilita o botão (evita envio em dobro) e avisa
+ * leitores de tela. O texto continua visível, para o botão não mudar de tamanho.
+ */
 function Button({
   className,
   variant = "default",
   size = "default",
   asChild = false,
+  loading = false,
+  disabled,
+  children,
   ...props
 }: React.ComponentProps<"button"> &
   VariantProps<typeof buttonVariants> & {
     asChild?: boolean
+    loading?: boolean
   }) {
   const Comp = asChild ? Slot.Root : "button"
 
@@ -55,9 +64,19 @@ function Button({
       data-slot="button"
       data-variant={variant}
       data-size={size}
+      data-loading={loading || undefined}
       className={cn(buttonVariants({ variant, size, className }))}
+      disabled={asChild ? undefined : disabled || loading}
+      aria-busy={loading || undefined}
       {...props}
-    />
+    >
+      {asChild ? children : (
+        <>
+          {loading && <Loader2 className="animate-spin" aria-hidden />}
+          {children}
+        </>
+      )}
+    </Comp>
   )
 }
 

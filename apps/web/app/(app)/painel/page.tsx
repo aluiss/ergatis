@@ -2,7 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
-import { Empty, ErrorState, Loading, post, useAction } from '@/components/app-ui';
+import { Empty, ErrorState, Loading, pendingFor, post, useAction } from '@/components/app-ui';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { api } from '@/lib/api';
@@ -54,7 +54,7 @@ export default function Panel() {
                   {n.link ? <Link href={n.link}>{n.title}</Link> : n.title}
                   <span className="text-muted-foreground block text-xs font-normal">{date(n.createdAt)}</span>
                 </span>
-                {!n.readAt && <Button size="sm" variant="ghost" onClick={() => read.mutate(n.id)}>Marcar como lida</Button>}
+                {!n.readAt && <Button size="sm" variant="ghost" loading={pendingFor(read, (v) => v === n.id)} onClick={() => read.mutate(n.id)}>Marcar como lida</Button>}
               </li>
             ))}
           </ul>

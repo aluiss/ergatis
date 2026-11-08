@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Empty, ErrorState, Loading, post, StatusBadge, useAction } from '@/components/app-ui';
+import { ConfirmAction } from '@/components/confirm-action';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -35,8 +36,26 @@ function Row({ e, userId }: { e: Item; userId: string }) {
           <StatusBadge status={e.status} />
         </div>
         <div className="flex flex-wrap gap-2">
-          {e.status === 'active' && isClient && <Button size="sm" onClick={() => complete.mutate()}>Confirmar conclusão</Button>}
-          {e.status === 'active' && <Button size="sm" variant="outline" onClick={() => cancel.mutate()}>Cancelar</Button>}
+          {e.status === 'active' && isClient && (
+            <ConfirmAction
+              title="O serviço foi concluído?"
+              description="Confirme só depois de o trabalho estar pronto. A contratação é encerrada e vocês dois poderão se avaliar."
+              confirmLabel="Confirmar conclusão"
+              onConfirm={() => complete.mutateAsync()}
+            >
+              <Button size="sm" loading={complete.isPending}>Confirmar conclusão</Button>
+            </ConfirmAction>
+          )}
+          {e.status === 'active' && (
+            <ConfirmAction
+              title="Cancelar esta contratação?"
+              description={`O pedido também é cancelado, e ${isClient ? 'o profissional' : 'o cliente'} será avisado. Não dá para desfazer.`}
+              confirmLabel="Cancelar contratação" destructive
+              onConfirm={() => cancel.mutateAsync()}
+            >
+              <Button size="sm" variant="outline" loading={cancel.isPending}>Cancelar</Button>
+            </ConfirmAction>
+          )}
           {e.status === 'completed' && !e.reviewedByMe && <Button size="sm" variant="outline" onClick={() => setMode('review')}>Avaliar</Button>}
           <Button size="sm" variant="ghost" onClick={() => setMode('report')}>Denunciar</Button>
         </div>
@@ -44,13 +63,13 @@ function Row({ e, userId }: { e: Item; userId: string }) {
           <form action={(f) => review.mutate(f)} className="grid gap-2 sm:grid-cols-[6rem_1fr_auto] sm:items-end">
             <div className="space-y-1"><Label htmlFor={`r-${e.id}`}>Nota</Label><Select id={`r-${e.id}`} name="rating" defaultValue="5">{[5, 4, 3, 2, 1].map((n) => <option key={n}>{n}</option>)}</Select></div>
             <div className="space-y-1"><Label htmlFor={`c-${e.id}`}>Comentário</Label><Input id={`c-${e.id}`} name="comment" maxLength={1000} /></div>
-            <Button>Enviar</Button>
+            <Button loading={review.isPending}>Enviar</Button>
           </form>
         )}
         {mode === 'report' && (
-          <form action={(f) => report.mutate(f)} className="flex items-end gap-2">
+          <form action={(f) => report.mutate(f)} className="flex flex-col gap-2 sm:flex-row sm:items-end">
             <div className="flex-1 space-y-1"><Label htmlFor={`d-${e.id}`}>O que aconteceu?</Label><Input id={`d-${e.id}`} name="reason" minLength={10} maxLength={1000} required /></div>
-            <Button>Enviar</Button>
+            <Button loading={report.isPending}>Enviar</Button>
           </form>
         )}
       </CardContent>

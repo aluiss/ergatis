@@ -42,3 +42,10 @@ export function useAction<V = void>(
 }
 
 export const post = (path: string, body?: unknown) => api(path, { method: 'POST', body });
+
+/**
+ * A mesma ação costuma atender várias linhas ("Retirar" em cada proposta). Isto diz
+ * se é a linha em questão que está em andamento, para só ela mostrar o indicador.
+ */
+export const pendingFor = <V,>(m: { isPending: boolean; variables?: V }, matches: (v: V) => boolean) =>
+  m.isPending && m.variables !== undefined && matches(m.variables);

@@ -4,7 +4,8 @@
 import { MAX_PORTFOLIO_ITEMS, MAX_VERIFICATION_DOCUMENTS } from '@ergatis/shared';
 import { useQuery } from '@tanstack/react-query';
 import { useRef } from 'react';
-import { post, useAction } from '@/components/app-ui';
+import { pendingFor, post, useAction } from '@/components/app-ui';
+import { ConfirmAction } from '@/components/confirm-action';
 import { Avatar } from '@/components/avatar';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,7 +14,7 @@ import { api, uploadFile } from '@/lib/api';
 
 interface StoredFile { id: string; kind: string; mimeType: string; caption: string | null }
 
-function FilePicker({ label, accept, disabled, onPick }: { label: string; accept: string; disabled?: boolean; onPick: (f: File) => void }) {
+function FilePicker({ label, accept, disabled, loading, onPick }: { label: string; accept: string; disabled?: boolean; loading?: boolean; onPick: (f: File) => void }) {
   const input = useRef<HTMLInputElement>(null);
   return (
     <>
@@ -21,7 +22,7 @@ function FilePicker({ label, accept, disabled, onPick }: { label: string; accept
         ref={input} type="file" accept={accept} className="sr-only" aria-label={label} tabIndex={-1}
         onChange={(e) => { const f = e.target.files?.[0]; if (f) onPick(f); e.target.value = ''; }}
       />
-      <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => input.current?.click()}>{label}</Button>
+      <Button type="button" variant="outline" size="sm" disabled={disabled} loading={loading} onClick={() => input.current?.click()}>{label}</Button>
     </>
   );
 }
@@ -43,8 +44,12 @@ export function AvatarCard({ fileId, name }: { fileId: string | null; name: stri
       <CardContent className="flex items-center gap-4">
         <Avatar fileId={fileId} name={name} className="size-20" />
         <div className="flex flex-wrap gap-2">
-          <FilePicker label={send.isPending ? 'Enviando...' : 'Trocar foto'} accept={IMAGE_TYPES} disabled={send.isPending} onPick={(f) => send.mutate(f)} />
-          {fileId && <Button size="sm" variant="ghost" onClick={() => remove.mutate(fileId)}>Remover</Button>}
+          <FilePicker label={send.isPending ? 'Enviando...' : 'Trocar foto'} accept={IMAGE_TYPES} loading={send.isPending} onPick={(f) => send.mutate(f)} />
+          {fileId && (
+            <ConfirmAction title="Remover sua foto?" description="Seu perfil volta a mostrar as iniciais do seu nome." confirmLabel="Remover foto" destructive onConfirm={() => remove.mutateAsync(fileId)}>
+              <Button size="sm" variant="ghost" loading={pendingFor(remove, (v) => v === fileId)}>Remover</Button>
+            </ConfirmAction>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -69,14 +74,16 @@ export function PortfolioCard() {
               <li key={f.id} className="space-y-1">
                 <img src={`/api/files/${f.id}`} alt={f.caption ?? 'Imagem do portfólio'} className="aspect-square w-full rounded-md object-cover" />
                 {f.caption && <p className="text-muted-foreground truncate text-xs">{f.caption}</p>}
-                <Button size="sm" variant="ghost" onClick={() => remove.mutate(f.id)}>Remover</Button>
+                <ConfirmAction title="Remover esta imagem do portfólio?" description="Ela some do seu perfil público. Não dá para recuperar." confirmLabel="Remover imagem" destructive onConfirm={() => remove.mutateAsync(f.id)}>
+                  <Button size="sm" variant="ghost" loading={pendingFor(remove, (v) => v === f.id)}>Remover</Button>
+                </ConfirmAction>
               </li>
             ))}
           </ul>
         )}
         <div className="flex flex-wrap items-center gap-2">
           <Input ref={caption} className="max-w-xs" maxLength={140} placeholder="Legenda (opcional)" aria-label="Legenda" />
-          <FilePicker label={send.isPending ? 'Enviando...' : 'Adicionar imagem'} accept={IMAGE_TYPES} disabled={send.isPending || items.length >= MAX_PORTFOLIO_ITEMS} onPick={(f) => send.mutate(f)} />
+          <FilePicker label={send.isPending ? 'Enviando...' : 'Adicionar imagem'} accept={IMAGE_TYPES} loading={send.isPending} disabled={items.length >= MAX_PORTFOLIO_ITEMS} onPick={(f) => send.mutate(f)} />
         </div>
       </CardContent>
     </Card>
@@ -104,14 +111,16 @@ export function VerificationCard({ status }: { status: string }) {
                 {documents.map((d, i) => (
                   <li key={d.id} className="flex items-center justify-between gap-3 p-2">
                     <span>Documento {i + 1}</span>
-                    <Button size="sm" variant="ghost" onClick={() => remove.mutate(d.id)}>Remover</Button>
+                    <ConfirmAction title={`Remover o documento ${i + 1}?`} description="O arquivo é apagado. Envie outro antes de pedir a verificação." confirmLabel="Remover documento" destructive onConfirm={() => remove.mutateAsync(d.id)}>
+                      <Button size="sm" variant="ghost" loading={pendingFor(remove, (v) => v === d.id)}>Remover</Button>
+                    </ConfirmAction>
                   </li>
                 ))}
               </ul>
             )}
             <div className="flex flex-wrap gap-2">
-              <FilePicker label={send.isPending ? 'Enviando...' : 'Enviar documento'} accept={`${IMAGE_TYPES},application/pdf`} disabled={send.isPending || documents.length >= MAX_VERIFICATION_DOCUMENTS} onPick={(f) => send.mutate(f)} />
-              <Button size="sm" disabled={documents.length === 0 || request.isPending} onClick={() => request.mutate()}>Solicitar verificação</Button>
+              <FilePicker label={send.isPending ? 'Enviando...' : 'Enviar documento'} accept={`${IMAGE_TYPES},application/pdf`} loading={send.isPending} disabled={documents.length >= MAX_VERIFICATION_DOCUMENTS} onPick={(f) => send.mutate(f)} />
+              <Button size="sm" disabled={documents.length === 0} loading={request.isPending} onClick={() => request.mutate()}>Solicitar verificação</Button>
             </div>
           </>
         )}

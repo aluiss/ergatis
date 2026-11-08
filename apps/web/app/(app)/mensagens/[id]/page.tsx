@@ -37,7 +37,7 @@ export default function Conversation() {
         if (body) send.mutate(body);
       }}>
         <Input name="body" maxLength={2000} placeholder="Escreva uma mensagem" aria-label="Mensagem" autoComplete="off" />
-        <Button disabled={send.isPending}>Enviar</Button>
+        <Button loading={send.isPending}>Enviar</Button>
       </form>
     </div>
   );

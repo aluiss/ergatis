@@ -39,7 +39,7 @@ function PlanForm({ plan }: { plan: Plan }) {
           {FLAGS.map(([key, label]) => (
             <label key={key} className="flex items-center gap-2 text-sm"><input type="checkbox" name={key} defaultChecked={plan.entitlements[key]} /> {label}</label>
           ))}
-          <Button disabled={save.isPending}>Salvar</Button>
+          <Button loading={save.isPending}>Salvar</Button>
         </form>
       </CardContent>
     </Card>

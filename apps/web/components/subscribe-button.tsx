@@ -35,7 +35,7 @@ export function SubscribeButton({ planCode, planName }: { planCode: 'pro' | 'pre
     <form className="space-y-2" onSubmit={(e) => { e.preventDefault(); subscribe.mutate(); }}>
       <Label htmlFor={`doc-${planCode}`}>CPF ou CNPJ para a cobrança</Label>
       <Input id={`doc-${planCode}`} inputMode="numeric" value={cpfCnpj} onChange={(e) => setCpfCnpj(e.target.value)} required />
-      <Button className="w-full" disabled={subscribe.isPending}>{subscribe.isPending ? 'Processando...' : 'Continuar para o pagamento'}</Button>
+      <Button className="w-full" loading={subscribe.isPending}>{subscribe.isPending ? 'Processando...' : 'Continuar para o pagamento'}</Button>
     </form>
   );
 }

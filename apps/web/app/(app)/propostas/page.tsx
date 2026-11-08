@@ -2,7 +2,8 @@
 
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
-import { Empty, ErrorState, Loading, post, StatusBadge, useAction } from '@/components/app-ui';
+import { Empty, ErrorState, Loading, pendingFor, post, StatusBadge, useAction } from '@/components/app-ui';
+import { ConfirmAction } from '@/components/confirm-action';
 import { Button } from '@/components/ui/button';
 import { api } from '@/lib/api';
 import { money } from '@/lib/format';
@@ -22,7 +23,16 @@ export default function Proposals() {
               <span><Link className="font-medium" href={`/pedidos/${p.requestId}`}>{p.requestTitle}</Link><span className="text-muted-foreground block text-sm">{money(p.amountCents)}</span></span>
               <span className="flex items-center gap-2">
                 <StatusBadge status={p.status} />
-                {p.status === 'sent' && <Button size="sm" variant="outline" onClick={() => withdraw.mutate(p.id)}>Retirar</Button>}
+                {p.status === 'sent' && (
+                  <ConfirmAction
+                    title="Retirar esta proposta?"
+                    description={`O cliente deixa de vê-la em "${p.requestTitle}". Não dá para reenviar para o mesmo pedido.`}
+                    confirmLabel="Retirar proposta" destructive
+                    onConfirm={() => withdraw.mutateAsync(p.id)}
+                  >
+                    <Button size="sm" variant="outline" loading={pendingFor(withdraw, (v) => v === p.id)}>Retirar</Button>
+                  </ConfirmAction>
+                )}
               </span>
             </li>
           ))}

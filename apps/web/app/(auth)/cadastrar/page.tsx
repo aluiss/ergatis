@@ -47,7 +47,7 @@ export default function Register() {
             <input type="checkbox" name="accept" className="mt-0.5" required />
             <span>Tenho 18 anos ou mais e aceito os <Link className="text-primary" href="/termos" target="_blank">Termos de Uso</Link> e a <Link className="text-primary" href="/privacidade" target="_blank">Política de Privacidade</Link>.</span>
           </label>
-          <Button className="w-full" disabled={pending}>{pending ? 'Criando...' : 'Criar conta'}</Button>
+          <Button className="w-full" loading={pending}>{pending ? 'Criando...' : 'Criar conta'}</Button>
         </form>
         <p className="mt-4 text-sm">Já tem conta? <Link className="text-primary" href="/entrar">Entrar</Link></p>
       </CardContent>

@@ -2,12 +2,15 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { ErrorState, Loading, useAction } from '@/components/app-ui';
+import { ConfirmAction } from '@/components/confirm-action';
 import { AvatarCard, PortfolioCard, VerificationCard } from '@/components/profile-files';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { useState } from 'react';
+import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { authClient } from '@/lib/auth-client';
 
@@ -39,13 +42,21 @@ export default function Profile() {
     window.location.href = '/';
   });
 
+  const [exporting, setExporting] = useState(false);
   async function download() {
+    setExporting(true);
+    try {
     const blob = new Blob([JSON.stringify(await api('/me/export'), null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = 'meus-dados-ergatis.json';
     a.click();
     URL.revokeObjectURL(a.href);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Não foi possível baixar seus dados.');
+    } finally {
+      setExporting(false);
+    }
   }
 
   if (me.isPending) return <Loading />;
@@ -68,7 +79,7 @@ export default function Profile() {
             </div>
             <div className="space-y-1"><Label htmlFor="bio">Sobre você</Label><Textarea id="bio" name="bio" maxLength={1000} defaultValue={p.bio ?? ''} /></div>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="emailNotifications" defaultChecked={p.emailNotifications} /> Receber avisos por e-mail</label>
-            <Button disabled={save.isPending}>Salvar</Button>
+            <Button loading={save.isPending}>Salvar</Button>
           </form>
         </CardContent>
       </Card>
@@ -87,7 +98,7 @@ export default function Profile() {
                 ))}
               </div>
             </fieldset>
-            <Button disabled={setup.isPending}>{pro ? 'Atualizar' : 'Quero oferecer serviços'}</Button>
+            <Button loading={setup.isPending}>{pro ? 'Atualizar' : 'Quero oferecer serviços'}</Button>
           </form>
         </CardContent>
       </Card>
@@ -98,8 +109,18 @@ export default function Profile() {
       <Card>
         <CardHeader><CardTitle>Privacidade</CardTitle></CardHeader>
         <CardContent className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={download}>Baixar meus dados</Button>
-          <Button variant="destructive" onClick={() => { if (confirm('Excluir sua conta? Essa ação não pode ser desfeita.')) remove.mutate(); }}>Excluir conta</Button>
+          <Button variant="outline" loading={exporting} onClick={download}>Baixar meus dados</Button>
+          <ConfirmAction
+            title="Excluir sua conta?"
+            description={<>
+              <p>Seus dados pessoais, fotos e documentos serão apagados e você sairá da plataforma. Avaliações e contratações já feitas continuam, mas sem o seu nome.</p>
+              <p className="mt-2">Antes, conclua ou cancele contratações em andamento e cancele sua assinatura. <b>Não dá para desfazer.</b></p>
+            </>}
+            confirmLabel="Excluir minha conta" destructive typeToConfirm="EXCLUIR"
+            onConfirm={() => remove.mutateAsync()}
+          >
+            <Button variant="destructive">Excluir conta</Button>
+          </ConfirmAction>
         </CardContent>
       </Card>
     </div>

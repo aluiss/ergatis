@@ -3,7 +3,7 @@
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense } from 'react';
 import { toast } from 'sonner';
-import { Button } from '@/components/ui/button';
+import { SubmitButton } from '@/components/submit-button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -26,7 +26,7 @@ function ResetForm() {
       <CardContent>
         <form action={submit} className="space-y-4">
           <div className="space-y-1"><Label htmlFor="password">Nova senha</Label><Input id="password" name="password" type="password" minLength={8} autoComplete="new-password" required /></div>
-          <Button className="w-full">Salvar</Button>
+          <SubmitButton className="w-full" pendingLabel="Salvando...">Salvar</SubmitButton>
         </form>
       </CardContent>
     </Card>
