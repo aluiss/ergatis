@@ -7,7 +7,7 @@ import { InjectDb } from '../common/db.module';
 import { isUniqueViolation } from '../common/pg-errors';
 import type { Db, Tx } from '../db/client';
 import {
-  conversations, engagements, professionals, proposals, proposalUsage, serviceRequests,
+  conversations, engagements, professionalCategories, professionals, proposals, proposalUsage, serviceRequests,
 } from '../db/schema';
 import { EntitlementsService } from '../entitlements/entitlements.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -71,8 +71,11 @@ export class ProposalsService {
         const { entitlements } = await this.entitlements.forUser(professionalId, tx);
         await this.consumeQuota(tx, professionalId, entitlements.monthlyProposalLimit);
 
+        // O perfil da pessoa que atende a categoria do pedido (uma categoria está em um só perfil).
+        const [match] = await tx.select({ id: professionalCategories.profileId }).from(professionalCategories)
+          .where(and(eq(professionalCategories.professionalId, professionalId), eq(professionalCategories.categoryId, request.categoryId)));
         const [proposal] = await tx.insert(proposals)
-          .values({ requestId, professionalId, ...values }).returning();
+          .values({ requestId, professionalId, profileId: match?.id ?? null, ...values }).returning();
         if (usedCheck) await this.verification.linkProposal(tx, usedCheck, proposal.id);
         await tx.insert(conversations).values({
           proposalId: proposal.id, clientId: request.clientId, professionalId,

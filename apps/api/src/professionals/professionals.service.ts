@@ -3,12 +3,12 @@ import { VerificationService } from '../verification/verification.service';
 import { annotateAudit } from '../audit/audit-context';
 import { diff } from '../audit/audit-policy';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { and, asc, avg, count, desc, eq, sql, type SQL } from 'drizzle-orm';
-import type { ProfessionalSetupInput, SearchProfessionalsInput } from '@ergatis/shared';
+import { and, asc, avg, count, desc, eq, ilike, inArray, ne, sql, type SQL } from 'drizzle-orm';
+import { MAX_PROFESSIONAL_PROFILES, type ProfessionalProfileInput, type ProfessionalSetupInput, type SearchProfessionalsInput } from '@ergatis/shared';
 import { InjectDb } from '../common/db.module';
-import type { Db } from '../db/client';
+import type { Db, DbOrTx, Tx } from '../db/client';
 import {
-  engagements, files, professionalCategories, professionals, profiles, reviews, serviceRequests,
+  categories, engagements, files, professionalCategories, professionalProfiles, professionals, profiles, reviews, serviceRequests,
 } from '../db/schema';
 import { entitlementFlagSql, EntitlementsService } from '../entitlements/entitlements.service';
 
@@ -21,29 +21,107 @@ export class ProfessionalsService {
     private readonly settings: PlatformSettingsService,
   ) {}
 
+  /** Perfis da pessoa, na ordem, com as categorias de cada um. */
+  async profilesOf(userId: string, executor: DbOrTx = this.db) {
+    const rows = await executor.select().from(professionalProfiles)
+      .where(eq(professionalProfiles.userId, userId)).orderBy(asc(professionalProfiles.position), asc(professionalProfiles.createdAt));
+    const cats = await executor.select({ profileId: professionalCategories.profileId, categoryId: professionalCategories.categoryId, name: categories.name })
+      .from(professionalCategories).innerJoin(categories, eq(categories.id, professionalCategories.categoryId))
+      .where(eq(professionalCategories.professionalId, userId));
+    return rows.map((r) => ({
+      id: r.id, title: r.title, serviceRadiusKm: r.serviceRadiusKm, position: r.position,
+      categoryIds: cats.filter((c) => c.profileId === r.id).map((c) => c.categoryId).sort(),
+      categories: cats.filter((c) => c.profileId === r.id).map((c) => c.name),
+    }));
+  }
+
+  /** Uma categoria fica em um só perfil da pessoa: cada pedido cai num perfil, sem ambiguidade. */
+  private async assertCategoriesFree(tx: Tx, userId: string, categoryIds: string[], exceptProfileId?: string) {
+    const taken = await tx.select({ categoryId: professionalCategories.categoryId, title: professionalProfiles.title })
+      .from(professionalCategories).innerJoin(professionalProfiles, eq(professionalProfiles.id, professionalCategories.profileId))
+      .where(and(
+        eq(professionalCategories.professionalId, userId), inArray(professionalCategories.categoryId, categoryIds),
+        exceptProfileId ? ne(professionalCategories.profileId, exceptProfileId) : undefined,
+      ));
+    if (taken.length) throw new ConflictException(`Categoria já usada no perfil "${taken[0].title}". Cada categoria fica em um só perfil.`);
+  }
+
+  private async writeCategories(tx: Tx, userId: string, profileId: string, categoryIds: string[]) {
+    await tx.delete(professionalCategories).where(eq(professionalCategories.profileId, profileId));
+    await tx.insert(professionalCategories).values([...new Set(categoryIds)].map((categoryId) => ({ professionalId: userId, profileId, categoryId })));
+  }
+
+  /**
+   * Tornar-se profissional (cria a pessoa como profissional e o primeiro perfil) ou,
+   * para quem já é, atualizar o primeiro perfil. Os demais perfis têm rotas próprias.
+   */
   async setup(userId: string, input: ProfessionalSetupInput) {
-    const [before] = await this.db.select().from(professionals).where(eq(professionals.userId, userId));
-    const beforeCategories = (await this.db.select({ id: professionalCategories.categoryId }).from(professionalCategories)
-      .where(eq(professionalCategories.professionalId, userId))).map((c) => c.id).sort();
-    await this.db.transaction(async (tx) => {
-      await tx.insert(professionals)
-        .values({ userId, headline: input.headline, serviceRadiusKm: input.serviceRadiusKm })
-        .onConflictDoUpdate({
-          target: professionals.userId,
-          set: { headline: input.headline, serviceRadiusKm: input.serviceRadiusKm },
-        });
-      await tx.delete(professionalCategories).where(eq(professionalCategories.professionalId, userId));
-      await tx.insert(professionalCategories)
-        .values(input.categoryIds.map((categoryId) => ({ professionalId: userId, categoryId })));
+    const created = await this.db.transaction(async (tx) => {
+      const inserted = await tx.insert(professionals).values({ userId }).onConflictDoNothing().returning({ id: professionals.userId });
+      const [first] = await tx.select().from(professionalProfiles).where(eq(professionalProfiles.userId, userId))
+        .orderBy(asc(professionalProfiles.position), asc(professionalProfiles.createdAt)).limit(1);
+      if (!first) {
+        const [profile] = await tx.insert(professionalProfiles).values({ userId, title: input.title, serviceRadiusKm: input.serviceRadiusKm }).returning();
+        await this.assertCategoriesFree(tx, userId, input.categoryIds, profile.id);
+        await this.writeCategories(tx, userId, profile.id, input.categoryIds);
+        return { isNew: inserted.length > 0, before: null };
+      }
+      const before = (await this.profilesOf(userId, tx)).find((p) => p.id === first.id)!;
+      await this.assertCategoriesFree(tx, userId, input.categoryIds, first.id);
+      await tx.update(professionalProfiles).set({ title: input.title, serviceRadiusKm: input.serviceRadiusKm }).where(eq(professionalProfiles.id, first.id));
+      await this.writeCategories(tx, userId, first.id, input.categoryIds);
+      return { isNew: false, before };
     });
     annotateAudit({
-      summary: before ? undefined : 'Perfil profissional criado',
-      changes: diff(
-        before ? { ...before, categoryIds: beforeCategories } : null,
-        { headline: input.headline, serviceRadiusKm: input.serviceRadiusKm, categoryIds: [...input.categoryIds].sort() },
-      ),
+      summary: created.isNew ? 'Perfil profissional criado' : undefined,
+      changes: diff(created.before, { title: input.title, serviceRadiusKm: input.serviceRadiusKm, categoryIds: [...input.categoryIds].sort() }, ['title', 'serviceRadiusKm', 'categoryIds']),
     });
     return this.getPublic(userId);
+  }
+
+  async createProfile(userId: string, input: ProfessionalProfileInput) {
+    const profile = await this.db.transaction(async (tx) => {
+      const [pro] = await tx.select({ id: professionals.userId }).from(professionals).where(eq(professionals.userId, userId)).for('update');
+      if (!pro) throw new BadRequestException('Crie seu perfil profissional primeiro');
+      const [{ total }] = await tx.select({ total: count() }).from(professionalProfiles).where(eq(professionalProfiles.userId, userId));
+      if (total >= MAX_PROFESSIONAL_PROFILES) throw new ConflictException(`Você pode ter até ${MAX_PROFESSIONAL_PROFILES} perfis profissionais`);
+      await this.assertCategoriesFree(tx, userId, input.categoryIds);
+      const [created] = await tx.insert(professionalProfiles)
+        .values({ userId, title: input.title, serviceRadiusKm: input.serviceRadiusKm, position: total }).returning();
+      await this.writeCategories(tx, userId, created.id, input.categoryIds);
+      return created;
+    });
+    annotateAudit({ targetId: profile.id, summary: input.title });
+    return (await this.profilesOf(userId)).find((p) => p.id === profile.id);
+  }
+
+  async updateProfile(userId: string, profileId: string, input: ProfessionalProfileInput) {
+    const before = (await this.profilesOf(userId)).find((p) => p.id === profileId);
+    if (!before) throw new NotFoundException('Perfil não encontrado');
+    await this.db.transaction(async (tx) => {
+      await this.assertCategoriesFree(tx, userId, input.categoryIds, profileId);
+      await tx.update(professionalProfiles).set({ title: input.title, serviceRadiusKm: input.serviceRadiusKm }).where(eq(professionalProfiles.id, profileId));
+      await this.writeCategories(tx, userId, profileId, input.categoryIds);
+    });
+    annotateAudit({
+      targetId: profileId,
+      changes: diff(before, { title: input.title, serviceRadiusKm: input.serviceRadiusKm, categoryIds: [...input.categoryIds].sort() }, ['title', 'serviceRadiusKm', 'categoryIds']),
+    });
+    return (await this.profilesOf(userId)).find((p) => p.id === profileId);
+  }
+
+  /** Remove um perfil. Ao menos um fica: sem perfil, a pessoa deixaria de ser profissional por acidente. */
+  async removeProfile(userId: string, profileId: string) {
+    const removed = await this.db.transaction(async (tx) => {
+      const mine = await tx.select().from(professionalProfiles).where(eq(professionalProfiles.userId, userId)).for('update');
+      const target = mine.find((p) => p.id === profileId);
+      if (!target) throw new NotFoundException('Perfil não encontrado');
+      if (mine.length <= 1) throw new ConflictException('Você precisa de ao menos um perfil profissional');
+      await tx.delete(professionalProfiles).where(eq(professionalProfiles.id, profileId));
+      return target;
+    });
+    annotateAudit({ targetId: profileId, summary: removed.title });
+    return { ok: true };
   }
 
   async requestVerification(userId: string) {
@@ -70,14 +148,13 @@ export class ProfessionalsService {
         bio: profiles.bio,
         city: profiles.city,
         state: profiles.state,
-        headline: professionals.headline,
-        serviceRadiusKm: professionals.serviceRadiusKm,
         verified: sql<boolean>`${professionals.verification} = 'approved'`,
       })
       .from(professionals)
       .innerJoin(profiles, eq(profiles.userId, professionals.userId))
       .where(and(eq(professionals.userId, userId), eq(professionals.active, true)));
     if (!row) throw new NotFoundException('Profissional não encontrado');
+    const specialties = (await this.profilesOf(userId)).map(({ id, title, serviceRadiusKm, categories: names }) => ({ id, title, serviceRadiusKm, categories: names }));
 
     const { entitlements } = await this.entitlements.forUser(userId);
     const [rating] = await this.db
@@ -110,6 +187,10 @@ export class ProfessionalsService {
 
     return {
       ...row,
+      // Compatibilidade: o primeiro perfil faz as vezes do antigo título único.
+      headline: specialties[0]?.title ?? '',
+      serviceRadiusKm: specialties[0]?.serviceRadiusKm ?? null,
+      profiles: specialties,
       portfolio,
       badge: entitlements.badge,
       rating: { average: rating.average ? Number(rating.average) : null, total: rating.total },
@@ -137,12 +218,14 @@ export class ProfessionalsService {
         where fe.user_id = ${professionals.userId} and fe.status = 'approved'))${grace})`);
     }
     if (input.categoryId) {
+      // Por perfil: aparece o perfil da pessoa que atende a categoria, com o título e o raio dele.
       filters.push(sql`exists (select 1 from professional_categories pc
-        where pc.professional_id = ${professionals.userId} and pc.category_id = ${input.categoryId})`);
+        where pc.profile_id = ${professionalProfiles.id} and pc.category_id = ${input.categoryId})`);
     }
+    if (input.q) filters.push(ilike(profiles.displayName, `%${input.q.replace(/[%_\\]/g, (c) => `\\${c}`)}%`));
     if (input.state) filters.push(eq(profiles.state, input.state));
     if (input.city) filters.push(sql`lower(${profiles.city}) = lower(${input.city})`);
-    if (hasPoint) filters.push(sql`${profiles.latitude} is not null and ${distanceKm} <= ${professionals.serviceRadiusKm}`);
+    if (hasPoint) filters.push(sql`${profiles.latitude} is not null and ${distanceKm} <= ${professionalProfiles.serviceRadiusKm}`);
 
     const highlight = entitlementFlagSql(professionals.userId, 'searchHighlight');
     const badge = entitlementFlagSql(professionals.userId, 'badge');
@@ -153,9 +236,10 @@ export class ProfessionalsService {
     const items = await this.db
       .select({
         userId: professionals.userId,
+        profileId: professionalProfiles.id,
         displayName: profiles.displayName,
         avatarFileId: profiles.avatarFileId,
-        headline: professionals.headline,
+        headline: professionalProfiles.title,
         city: profiles.city,
         state: profiles.state,
         verified: sql<boolean>`${professionals.verification} = 'approved'`,
@@ -167,18 +251,21 @@ export class ProfessionalsService {
       })
       .from(professionals)
       .innerJoin(profiles, eq(profiles.userId, professionals.userId))
+      .innerJoin(professionalProfiles, eq(professionalProfiles.userId, professionals.userId))
       .where(where)
       .orderBy(
         sql`${highlight} desc`,
         sql`${ratingAverage} desc nulls last`,
         ...(hasPoint ? [sql`${distanceKm} asc nulls last`] : []),
         professionals.userId,
+        professionalProfiles.position,
       )
       .limit(input.pageSize)
       .offset((input.page - 1) * input.pageSize);
 
     const [{ total }] = await this.db.select({ total: count() }).from(professionals)
-      .innerJoin(profiles, eq(profiles.userId, professionals.userId)).where(where);
+      .innerJoin(profiles, eq(profiles.userId, professionals.userId))
+      .innerJoin(professionalProfiles, eq(professionalProfiles.userId, professionals.userId)).where(where);
 
     return { items, total, page: input.page, pageSize: input.pageSize };
   }

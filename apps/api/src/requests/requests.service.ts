@@ -4,7 +4,7 @@ import type { CreateRequestInput } from '@ergatis/shared';
 import { InjectDb } from '../common/db.module';
 import type { Db } from '../db/client';
 import {
-  categories, professionalCategories, professionals, profiles, proposals, reviews, serviceRequests,
+  categories, professionalCategories, professionalProfiles, professionals, profiles, proposals, reviews, serviceRequests,
 } from '../db/schema';
 import { entitlementFlagSql, EntitlementsService } from '../entitlements/entitlements.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -36,16 +36,26 @@ export class RequestsService {
   }
 
   /** Pedidos abertos nas categorias do profissional. Coordenadas exatas não são expostas. */
-  async feed(professionalId: string) {
+  /**
+   * Pedidos abertos nas categorias da pessoa. Com `profileId`, só as do perfil escolhido.
+   * Cada item diz em qual perfil se encaixa (uma categoria está em um só perfil).
+   */
+  async feed(professionalId: string, profileId?: string) {
     const [pro] = await this.db.select({ id: professionals.userId }).from(professionals)
       .where(eq(professionals.userId, professionalId));
     if (!pro) throw new ForbiddenException('Crie seu perfil profissional primeiro');
 
-    const mineCategories = await this.db.select({ id: professionalCategories.categoryId })
-      .from(professionalCategories).where(eq(professionalCategories.professionalId, professionalId));
+    const mineCategories = await this.db
+      .select({ id: professionalCategories.categoryId, profileId: professionalCategories.profileId, profileTitle: professionalProfiles.title })
+      .from(professionalCategories).innerJoin(professionalProfiles, eq(professionalProfiles.id, professionalCategories.profileId))
+      .where(and(
+        eq(professionalCategories.professionalId, professionalId),
+        profileId ? eq(professionalCategories.profileId, profileId) : undefined,
+      ));
     if (mineCategories.length === 0) return [];
+    const profileOf = new Map(mineCategories.map((c) => [c.id, { profileId: c.profileId, profileTitle: c.profileTitle }]));
 
-    return this.db
+    const rows = await this.db
       .select({
         id: serviceRequests.id, title: serviceRequests.title, description: serviceRequests.description,
         city: serviceRequests.city, state: serviceRequests.state, budgetCents: serviceRequests.budgetCents,
@@ -61,6 +71,7 @@ export class RequestsService {
         inArray(serviceRequests.categoryId, mineCategories.map((c) => c.id)),
       ))
       .orderBy(desc(serviceRequests.urgent), desc(serviceRequests.createdAt)).limit(100);
+    return rows.map((r) => ({ ...r, ...profileOf.get(r.categoryId) }));
   }
 
   async detail(userId: string, id: string) {
@@ -72,13 +83,17 @@ export class RequestsService {
         .select({
           id: proposals.id, professionalId: proposals.professionalId, amountCents: proposals.amountCents,
           message: proposals.message, status: proposals.status, createdAt: proposals.createdAt,
-          displayName: profiles.displayName, headline: professionals.headline,
+          displayName: profiles.displayName,
+          // O título do perfil com que a proposta foi feita (ex.: "Eletricista", e não "Pintor").
+          headline: sql<string>`coalesce(${professionalProfiles.title}, (select pp.title from professional_profiles pp
+            where pp.user_id = ${proposals.professionalId} order by pp.position limit 1))`,
           badge: entitlementFlagSql(proposals.professionalId, 'badge'),
           ratingAverage: sql<number | null>`(select avg(r.rating)::float from reviews r where r.reviewee_id = ${proposals.professionalId})`,
         })
         .from(proposals)
         .innerJoin(professionals, eq(professionals.userId, proposals.professionalId))
         .innerJoin(profiles, eq(profiles.userId, proposals.professionalId))
+        .leftJoin(professionalProfiles, eq(professionalProfiles.id, proposals.profileId))
         .where(eq(proposals.requestId, id))
         .orderBy(desc(proposals.createdAt));
       return { ...request, proposals: received };

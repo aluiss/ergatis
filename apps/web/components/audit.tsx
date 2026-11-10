@@ -42,7 +42,7 @@ export function AuditActionBadge({ action }: { action: string }) {
 const FIELD_LABELS: Record<string, string> = {
   displayName: 'Nome exibido', phone: 'Telefone', bio: 'Sobre', city: 'Cidade', state: 'Estado',
   latitude: 'Latitude', longitude: 'Longitude', emailNotifications: 'Avisos por e-mail',
-  headline: 'Título profissional', serviceRadiusKm: 'Raio de atendimento (km)', categoryIds: 'Categorias',
+  headline: 'Título profissional', title: 'Título', serviceRadiusKm: 'Raio de atendimento (km)', categoryIds: 'Categorias',
   role: 'Papel', banned: 'Banido', banReason: 'Motivo do banimento',
   status: 'Situação', resolution: 'Resolução', currentPeriodEnd: 'Fim do período', cancelledAt: 'Cancelada em',
   name: 'Nome', priceCents: 'Preço (centavos)', entitlements: 'Benefícios', active: 'Ativo',

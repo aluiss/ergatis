@@ -1,5 +1,6 @@
 export * from './access';
 export * from './audit';
+export * from './dashboard';
 export * from './entitlements';
 export * from './enums';
 export * from './files';

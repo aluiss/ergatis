@@ -326,7 +326,8 @@ class AdminService {
     );
     // Mais antigas primeiro: é uma fila.
     const pending = await this.db.select({
-      userId: professionals.userId, headline: professionals.headline, name: user.name, email: user.email, requestedAt: professionals.updatedAt,
+      userId: professionals.userId,
+      headline: sql<string>`(select string_agg(pp.title, ' · ' order by pp.position) from professional_profiles pp where pp.user_id = ${professionals.userId})`, name: user.name, email: user.email, requestedAt: professionals.updatedAt,
     }).from(professionals).innerJoin(user, eq(user.id, professionals.userId)).where(where)
       .orderBy(professionals.updatedAt).limit(PAGE_SIZE).offset((page - 1) * PAGE_SIZE);
     const [{ total }] = await this.db.select({ total: count() }).from(professionals).innerJoin(user, eq(user.id, professionals.userId)).where(where);

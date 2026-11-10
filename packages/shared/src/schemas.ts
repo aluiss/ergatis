@@ -16,12 +16,19 @@ export const updateProfileSchema = z.object({
 });
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
 
-export const professionalSetupSchema = z.object({
-  headline: z.string().trim().min(5).max(120),
+/** Quantos perfis profissionais (especialidades) cada pessoa pode ter. */
+export const MAX_PROFESSIONAL_PROFILES = 3;
+
+/** Um perfil profissional: título, categorias e raio de atendimento. */
+export const professionalProfileSchema = z.object({
+  title: z.string().trim().min(5).max(120),
   serviceRadiusKm: z.number().int().min(1).max(300).default(20),
   categoryIds: z.array(z.uuid()).min(1).max(20),
 });
-export type ProfessionalSetupInput = z.infer<typeof professionalSetupSchema>;
+export type ProfessionalProfileInput = z.infer<typeof professionalProfileSchema>;
+/** Tornar-se profissional: cria a pessoa como profissional e o primeiro perfil (ou atualiza o primeiro). */
+export const professionalSetupSchema = professionalProfileSchema;
+export type ProfessionalSetupInput = ProfessionalProfileInput;
 
 export const createRequestSchema = z.object({
   categoryId: z.uuid(),
@@ -55,6 +62,8 @@ export const sendMessageSchema = z.object({ body: z.string().trim().min(1).max(2
 export type SendMessageInput = z.infer<typeof sendMessageSchema>;
 
 export const searchProfessionalsSchema = z.object({
+  /** Nome de exibição do profissional (busca do cliente). */
+  q: z.string().trim().max(80).optional(),
   categoryId: z.uuid().optional(),
   city: z.string().trim().max(100).optional(),
   state: z.string().trim().length(2).toUpperCase().optional(),

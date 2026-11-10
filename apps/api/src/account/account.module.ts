@@ -2,7 +2,7 @@ import { VerificationService } from '../verification/verification.service';
 import {
   Body, ConflictException, Controller, Delete, Get, Injectable, Module, Patch,
 } from '@nestjs/common';
-import { and, eq, or } from 'drizzle-orm';
+import { and, asc, eq, or } from 'drizzle-orm';
 import { updateProfileSchema, type UpdateProfileInput } from '@ergatis/shared';
 import { recordAudit } from '../audit/audit';
 import { annotateAudit } from '../audit/audit-context';
@@ -13,7 +13,7 @@ import { UserId } from '../common/user-id.decorator';
 import { ZodPipe } from '../common/zod.pipe';
 import type { Db } from '../db/client';
 import {
-  account, engagements, legalAcceptances, twoFactor, professionalCategories, professionals, profiles, proposalUsage, reviews, serviceRequests, session,
+  account, engagements, legalAcceptances, twoFactor, professionalCategories, professionalProfiles, professionals, profiles, proposalUsage, reviews, serviceRequests, session,
   subscriptions, user,
 } from '../db/schema';
 import { EntitlementsService } from '../entitlements/entitlements.service';
@@ -32,14 +32,23 @@ class AccountService {
   async me(userId: string) {
     const [profile] = await this.db.select().from(profiles).where(eq(profiles.userId, userId));
     const [professional] = await this.db.select().from(professionals).where(eq(professionals.userId, userId));
-    const categoryRows = await this.db.select({ id: professionalCategories.categoryId })
+    const categoryRows = await this.db.select({ id: professionalCategories.categoryId, profileId: professionalCategories.profileId })
       .from(professionalCategories).where(eq(professionalCategories.professionalId, userId));
+    const profileRows = professional ? await this.db.select().from(professionalProfiles)
+      .where(eq(professionalProfiles.userId, userId)).orderBy(asc(professionalProfiles.position), asc(professionalProfiles.createdAt)) : [];
     const access = await this.entitlements.forUser(userId);
     const [usage] = await this.db.select({ used: proposalUsage.used }).from(proposalUsage)
       .where(and(eq(proposalUsage.professionalId, userId), eq(proposalUsage.period, currentPeriod())));
     return {
       profile,
-      professional: professional ? { ...professional, categoryIds: categoryRows.map((c) => c.id) } : null,
+      professional: professional ? {
+        ...professional,
+        categoryIds: categoryRows.map((c) => c.id),
+        profiles: profileRows.map((p) => ({
+          id: p.id, title: p.title, serviceRadiusKm: p.serviceRadiusKm,
+          categoryIds: categoryRows.filter((c) => c.profileId === p.id).map((c) => c.id),
+        })),
+      } : null,
       ...access,
       proposalsUsed: usage?.used ?? 0,
     };

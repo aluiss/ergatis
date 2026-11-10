@@ -70,7 +70,7 @@ export async function anyCategoryId() {
 export async function makeProfessional(app: INestApplication, name = 'Profissional', { verified = true } = {}) {
   const actor = await signUp(app, name);
   const res = await api(app, actor).put('/professionals/me', {
-    headline: 'Eletricista experiente', serviceRadiusKm: 30, categoryIds: [await anyCategoryId()],
+    title: 'Eletricista experiente', serviceRadiusKm: 30, categoryIds: [await anyCategoryId()],
   });
   if (res.status !== 200) throw new Error(`setup ${res.status}: ${res.text}`);
   if (verified) await markVerified(actor);

@@ -9,6 +9,7 @@ import { publicGet } from '@/lib/server-api';
 interface Profile {
   displayName: string; avatarFileId: string | null; portfolio: { id: string; caption: string | null }[] | null;
   headline: string; bio: string | null; city: string | null; state: string | null;
+  profiles: { id: string; title: string; serviceRadiusKm: number; categories: string[] }[];
   verified: boolean; badge: boolean;
   rating: { average: number | null; total: number };
   latestReviews: { rating: number; comment: string | null; createdAt: string }[];
@@ -37,7 +38,7 @@ export default async function ProfessionalPage({ params }: { params: Promise<{ i
           {p.badge && <Crown className="size-6 text-amber-500" aria-label="Selo Premium" />}
           {p.verified && <BadgeCheck className="text-primary size-6" aria-label="Verificado" />}
         </h1>
-        <p className="text-muted-foreground mt-1">{p.headline}</p>
+        <p className="text-muted-foreground mt-1">{p.profiles.map((s) => s.title).join(' · ') || p.headline}</p>
         <p className="mt-2 text-sm">
           {[p.city, p.state].filter(Boolean).join(' - ')}
           {p.rating.total > 0 && ` · nota ${p.rating.average?.toFixed(1)} em ${p.rating.total} avaliação(ões)`}
@@ -45,6 +46,21 @@ export default async function ProfessionalPage({ params }: { params: Promise<{ i
         </div>
       </div>
       {p.bio && <p>{p.bio}</p>}
+
+      {p.profiles.length > 1 && (
+        <section aria-labelledby="especialidades" className="space-y-2">
+          <h2 id="especialidades" className="font-semibold">Especialidades</h2>
+          <ul className="grid gap-2 sm:grid-cols-2">
+            {p.profiles.map((s) => (
+              <li key={s.id} className="rounded-lg border p-3 text-sm">
+                <p className="font-medium">{s.title}</p>
+                <p className="text-muted-foreground">{s.categories.join(', ')}</p>
+                <p className="text-muted-foreground text-xs">Atende até {s.serviceRadiusKm} km</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {p.portfolio && p.portfolio.length > 0 && (
         <Card>

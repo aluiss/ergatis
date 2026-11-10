@@ -11,6 +11,7 @@ import { auth } from './auth/auth';
 import { BillingModule } from './billing/billing.module';
 import { CategoriesModule } from './categories/categories.module';
 import { DbModule } from './common/db.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 import { env } from './config/env';
 import { EngagementsModule } from './engagements/engagements.module';
 import { EntitlementsModule } from './entitlements/entitlements.module';
@@ -37,6 +38,7 @@ import { VerificationModule } from './verification/verification.module';
     HealthModule,
     CategoriesModule,
     AccountModule,
+    DashboardModule,
     ProfessionalsModule,
     RequestsModule,
     ProposalsModule,

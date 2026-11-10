@@ -6,6 +6,7 @@ import { ConfirmAction } from '@/components/confirm-action';
 import { TwoFactorCard } from '@/components/two-factor-card';
 import { useAccess } from '@/components/access-provider';
 import { AvatarCard, PortfolioCard, VerificationCard } from '@/components/profile-files';
+import { ProfessionalProfiles, type ProfessionalProfile } from '@/components/professional-profiles';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -16,16 +17,14 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { authClient } from '@/lib/auth-client';
 
-interface Category { id: string; name: string; parentId: string | null }
 interface Me {
   profile: { displayName: string; avatarFileId: string | null; emailNotifications: boolean; phone: string | null; bio: string | null; city: string | null; state: string | null };
-  professional: { headline: string; serviceRadiusKm: number; verification: string; categoryIds: string[] } | null;
+  professional: { verification: string; categoryIds: string[]; profiles: ProfessionalProfile[] } | null;
 }
 
 export default function Profile() {
   const { access } = useAccess();
   const me = useQuery({ queryKey: ['me'], queryFn: () => api<Me>('/me') });
-  const categories = useQuery({ queryKey: ['categories'], queryFn: () => api<Category[]>('/categories') });
 
   const save = useAction((f: FormData) => {
     const value = (k: string) => String(f.get(k) ?? '').trim() || undefined;
@@ -34,10 +33,6 @@ export default function Profile() {
       emailNotifications: f.get('emailNotifications') === 'on',
     } });
   }, { invalidate: ['me'], success: 'Perfil salvo.' });
-
-  const setup = useAction((f: FormData) => api('/professionals/me', { method: 'PUT', body: {
-    headline: f.get('headline'), serviceRadiusKm: Number(f.get('radius')), categoryIds: f.getAll('categoryIds'),
-  } }), { invalidate: ['me'], success: 'Perfil profissional salvo.' });
 
   const remove = useAction(async () => {
     await api('/me', { method: 'DELETE' });
@@ -87,24 +82,7 @@ export default function Profile() {
         </CardContent>
       </Card>
 
-      <Card id="perfil-profissional" className="scroll-mt-20">
-        <CardHeader><CardTitle>Perfil profissional</CardTitle></CardHeader>
-        <CardContent>
-          <form action={(f) => setup.mutate(f)} className="space-y-3">
-            <div className="space-y-1"><Label htmlFor="headline">Título</Label><Input id="headline" name="headline" minLength={5} maxLength={120} defaultValue={pro?.headline} placeholder="Ex.: Eletricista residencial" required /></div>
-            <div className="space-y-1"><Label htmlFor="radius">Raio de atendimento (km)</Label><Input id="radius" name="radius" type="number" min={1} max={300} defaultValue={pro?.serviceRadiusKm ?? 20} required /></div>
-            <fieldset className="space-y-1">
-              <legend className="text-sm font-medium">Categorias que você atende</legend>
-              <div className="grid gap-1 sm:grid-cols-2">
-                {categories.data?.filter((c) => c.parentId).map((c) => (
-                  <label key={c.id} className="flex items-center gap-2 text-sm"><input type="checkbox" name="categoryIds" value={c.id} defaultChecked={pro?.categoryIds.includes(c.id)} /> {c.name}</label>
-                ))}
-              </div>
-            </fieldset>
-            <Button loading={setup.isPending}>{pro ? 'Atualizar' : 'Quero oferecer serviços'}</Button>
-          </form>
-        </CardContent>
-      </Card>
+      <ProfessionalProfiles profiles={pro?.profiles ?? null} />
 
       {pro && <PortfolioCard />}
       {pro && <VerificationCard />}

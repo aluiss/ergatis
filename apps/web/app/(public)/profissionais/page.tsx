@@ -12,13 +12,13 @@ import { publicGet } from '@/lib/server-api';
 export const metadata: Metadata = { title: 'Profissionais' };
 
 interface Item {
-  userId: string; displayName: string; avatarFileId: string | null; headline: string; city: string | null; state: string | null;
+  userId: string; profileId: string; displayName: string; avatarFileId: string | null; headline: string; city: string | null; state: string | null;
   verified: boolean; highlighted: boolean; badge: boolean; ratingAverage: number | null; ratingTotal: number;
 }
 interface Result { items: Item[]; total: number; page: number; pageSize: number }
 interface Category { id: string; name: string; parentId: string | null }
 
-type Search = { categoryId?: string; city?: string; state?: string; page?: string };
+type Search = { q?: string; categoryId?: string; city?: string; state?: string; page?: string };
 
 export default async function Professionals({ searchParams }: { searchParams: Promise<Search> }) {
   const params = await searchParams;
@@ -34,20 +34,23 @@ export default async function Professionals({ searchParams }: { searchParams: Pr
   return (
     <div className="mx-auto max-w-6xl px-4 py-8">
       <h1 className="text-3xl font-bold">Profissionais</h1>
-      <form className="mt-6 grid gap-3 sm:grid-cols-[1fr_1fr_6rem_auto]">
-        <Select name="categoryId" defaultValue={params.categoryId ?? ''} aria-label="Categoria">
+      <form className="mt-6 grid grid-cols-[1fr_5rem] gap-3 sm:grid-cols-[1.2fr_1fr_1fr_5rem_auto]">
+        {/* Nome do profissional: para achar alguém já indicado ou com quem já trabalhou. */}
+        <Input name="q" type="search" placeholder="Nome do profissional" defaultValue={params.q} aria-label="Nome do profissional" className="col-span-2 h-11 sm:col-span-1 sm:h-9" />
+        <Select name="categoryId" defaultValue={params.categoryId ?? ''} aria-label="Categoria" className="col-span-2 h-11 sm:col-span-1 sm:h-9">
           <option value="">Todas as categorias</option>
           {categories?.filter((c) => c.parentId).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </Select>
-        <Input name="city" placeholder="Cidade" defaultValue={params.city} aria-label="Cidade" />
-        <Input name="state" placeholder="UF" maxLength={2} defaultValue={params.state} aria-label="UF" />
-        <Button type="submit">Buscar</Button>
+        <Input name="city" placeholder="Cidade" defaultValue={params.city} aria-label="Cidade" className="h-11 sm:h-9" />
+        <Input name="state" placeholder="UF" maxLength={2} defaultValue={params.state} aria-label="UF" className="h-11 sm:h-9" />
+        <Button type="submit" className="col-span-2 h-11 sm:col-span-1 sm:h-9">Buscar</Button>
       </form>
 
       <p className="text-muted-foreground mt-6 text-sm">{result?.total ?? 0} encontrado(s)</p>
       <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {result?.items.map((p) => (
-          <Link key={p.userId} href={`/profissionais/${p.userId}`}>
+          // Um cartão por perfil: a mesma pessoa pode aparecer como "Eletricista" e como "Pintor".
+          <Link key={p.profileId} href={`/profissionais/${p.userId}`}>
             <Card className={p.highlighted ? 'border-primary h-full' : 'h-full'}>
               <CardContent>
                 <div className="flex items-center gap-3">

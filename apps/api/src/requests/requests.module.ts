@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Module, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Get, Module, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { createRequestSchema, type CreateRequestInput } from '@ergatis/shared';
 import { Audit } from '../audit/audit.interceptor';
 import { UserId } from '../common/user-id.decorator';
@@ -15,7 +15,9 @@ class RequestsController {
   }
 
   @Get('mine') mine(@UserId() userId: string) { return this.service.mine(userId); }
-  @Get('feed') feed(@UserId() userId: string) { return this.service.feed(userId); }
+  @Get('feed') feed(@UserId() userId: string, @Query('profileId', new ParseUUIDPipe({ optional: true })) profileId?: string) {
+    return this.service.feed(userId, profileId);
+  }
 
   @Get(':id')
   detail(@UserId() userId: string, @Param('id', ParseUUIDPipe) id: string) {

@@ -1,6 +1,9 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { Suspense } from 'react';
+import { FilterChips } from '@/components/list-ui';
+import { useListParams } from '@/hooks/use-list-params';
 import Link from 'next/link';
 import { Empty, ErrorState, Loading } from '@/components/app-ui';
 import { Badge } from '@/components/ui/badge';
@@ -13,10 +16,22 @@ import { money } from '@/lib/format';
 interface Item {
   id: string; title: string; description: string; city: string; state: string;
   budgetCents: number | null; urgent: boolean; alreadyProposed: boolean;
+  /** Perfil da pessoa em que o pedido se encaixa. */
+  profileId: string; profileTitle: string;
 }
+interface Me { professional: { profiles: { id: string; title: string }[] } | null }
 
-export default function Opportunities() {
-  const q = useQuery({ queryKey: ['feed'], queryFn: () => api<Item[]>('/requests/feed') });
+function Opportunities() {
+  const me = useQuery({ queryKey: ['me'], queryFn: () => api<Me>('/me') });
+  const profiles = me.data?.professional?.profiles ?? [];
+  const { values, set } = useListParams(['perfil'] as const);
+  // Perfil removido ou de outra pessoa na URL: volta para todos.
+  const profileId = profiles.some((p) => p.id === values.perfil) ? values.perfil : '';
+  const q = useQuery({
+    queryKey: ['feed', profileId],
+    queryFn: () => api<Item[]>(`/requests/feed${profileId ? `?profileId=${profileId}` : ''}`),
+    placeholderData: keepPreviousData,
+  });
   const v = useQuery({ queryKey: ['verification'], queryFn: () => api<VerificationStatusView>('/verification/me') });
   return (
     <div className="space-y-4">
@@ -33,10 +48,14 @@ export default function Opportunities() {
           Até {new Date(v.data.graceUntil).toLocaleDateString('pt-BR')} você pode propor sem verificação. <Link className="font-medium underline underline-offset-2" href="/perfil#verificacao">Verifique agora</Link> para não ser interrompido.
         </p>
       )}
+      {profiles.length > 1 && (
+        <FilterChips label="Perfil profissional" value={profileId} onChange={(perfil) => set({ perfil })}
+          options={[['', 'Todos os perfis'], ...profiles.map((p) => [p.id, p.title] as const)]} />
+      )}
       {q.isPending ? <Loading /> : q.error ? (
         <Empty>{q.error.message}. <Link className="text-primary" href="/perfil">Ir para o perfil</Link></Empty>
-      ) : q.data.length === 0 ? <Empty>Nenhum pedido aberto nas suas categorias agora.</Empty> : (
-        <ul className="divide-y rounded-lg border">
+      ) : q.data.length === 0 ? <Empty>{profileId ? 'Nenhum pedido aberto para este perfil agora.' : 'Nenhum pedido aberto nas suas categorias agora.'}</Empty> : (
+        <ul className={`divide-y rounded-lg border ${q.isPlaceholderData ? 'opacity-60' : ''}`}>
           {q.data.map((r) => (
             <li key={r.id}>
               <Link href={`/pedidos/${r.id}`} className="hover:bg-muted block p-3">
@@ -46,6 +65,7 @@ export default function Opportunities() {
                   {r.alreadyProposed && <Badge variant="secondary">Proposta enviada</Badge>}
                 </span>
                 <span className="text-muted-foreground block text-sm">{r.city} - {r.state}{r.budgetCents ? ` · ${money(r.budgetCents)}` : ''}</span>
+                {profiles.length > 1 && !profileId && <span className="text-primary mt-1 block text-xs font-medium">{r.profileTitle}</span>}
               </Link>
             </li>
           ))}
@@ -54,3 +74,5 @@ export default function Opportunities() {
     </div>
   );
 }
+
+export default function OpportunitiesPage() { return <Suspense fallback={<Loading />}><Opportunities /></Suspense>; }

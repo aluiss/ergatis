@@ -131,15 +131,31 @@ export const profiles = pgTable('profiles', {
   updatedAt: updatedAt(),
 }, (t) => [index('profiles_location_idx').on(t.state, t.city)]);
 
+/**
+ * A pessoa como profissional: identidade verificada, plano, avaliações e portfólio são
+ * dela. O que ela oferece (título, categorias, raio) fica nos perfis abaixo.
+ */
 export const professionals = pgTable('professionals', {
   userId: uuid().primaryKey().references(() => user.id, { onDelete: 'cascade' }),
-  headline: varchar({ length: 120 }).notNull(),
-  serviceRadiusKm: integer().notNull().default(20),
   verification: verificationStatus().notNull().default('none'),
   active: boolean().notNull().default(true),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
-}, (t) => [check('professionals_radius_check', sql`${t.serviceRadiusKm} between 1 and 300`)]);
+});
+
+/** Cada especialidade que a pessoa oferece (ex.: "Eletricista", "Pintor"). Ordem por `position`. */
+export const professionalProfiles = pgTable('professional_profiles', {
+  id: id(),
+  userId: uuid().notNull().references(() => professionals.userId, { onDelete: 'cascade' }),
+  title: varchar({ length: 120 }).notNull(),
+  serviceRadiusKm: integer().notNull().default(20),
+  position: integer().notNull().default(0),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  index('professional_profiles_user_idx').on(t.userId, t.position),
+  check('professional_profiles_radius_check', sql`${t.serviceRadiusKm} between 1 and 300`),
+]);
 
 export const categories = pgTable('categories', {
   id: id(),
@@ -150,10 +166,16 @@ export const categories = pgTable('categories', {
   createdAt: createdAt(),
 }, (t) => [index('categories_parent_idx').on(t.parentId)]);
 
+/**
+ * Categorias de cada perfil. A chave (pessoa, categoria) garante que uma categoria esteja
+ * em um só perfil da pessoa: cada pedido cai num perfil, sem ambiguidade.
+ */
 export const professionalCategories = pgTable('professional_categories', {
   professionalId: uuid().notNull().references(() => professionals.userId, { onDelete: 'cascade' }),
+  profileId: uuid().notNull().references(() => professionalProfiles.id, { onDelete: 'cascade' }),
   categoryId: uuid().notNull().references(() => categories.id, { onDelete: 'restrict' }),
 }, (t) => [
+  index('professional_categories_profile_idx').on(t.profileId),
   primaryKey({ columns: [t.professionalId, t.categoryId] }),
   index('professional_categories_category_idx').on(t.categoryId),
 ]);
@@ -185,6 +207,8 @@ export const proposals = pgTable('proposals', {
   id: id(),
   requestId: uuid().notNull().references(() => serviceRequests.id, { onDelete: 'cascade' }),
   professionalId: uuid().notNull().references(() => professionals.userId, { onDelete: 'restrict' }),
+  /** Perfil da pessoa com que a proposta foi feita (o que o cliente vê como título). */
+  profileId: uuid().references(() => professionalProfiles.id, { onDelete: 'set null' }),
   amountCents: integer().notNull(),
   message: varchar({ length: 1000 }).notNull(),
   status: proposalStatus().notNull().default('sent'),
